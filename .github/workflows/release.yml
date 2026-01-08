@@ -1,0 +1,83 @@
+name: Go Releaser
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go-version: ["1.24"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          GOOS=$(go env GOOS)
+          GOARCH=$(go env GOARCH)
+          OUTPUT_NAME="antimatter-${GOOS}-${GOARCH}"
+          go build -ldflags="-s -w" -o "${OUTPUT_NAME}" ./cmd/proxy
+          echo "OUTPUT_NAME=${OUTPUT_NAME}" >> $GITHUB_ENV
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $GOOS = go env GOOS
+          $GOARCH = go env GOARCH
+          $OUTPUT_NAME = "antimatter-${GOOS}-${GOARCH}.exe"
+          go build -ldflags="-s -w" -o $OUTPUT_NAME ./cmd/proxy
+          echo "OUTPUT_NAME=$OUTPUT_NAME" >> $env:GITHUB_ENV
+
+      - name: Upload Artifact (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: antimatter-${{ matrix.os }}
+          path: antimatter-*
+
+      - name: Upload Artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: antimatter-${{ matrix.os }}
+          path: antimatter-*.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -R artifacts
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
