@@ -244,12 +244,22 @@ func main() {
 	// Check for login command
 	if len(os.Args) > 1 {
 		if os.Args[1] == "login" {
-			auth.Login()
+			if _, err := auth.Login(); err != nil {
+				log.Fatalf("Login failed: %v", err)
+			}
 			return
 		}
 		if os.Args[1] == "status" {
 			runStatus()
 			return
+		}
+	}
+
+	// Check for webui flag
+	enableWebUI := false
+	for _, arg := range os.Args {
+		if arg == "webui" {
+			enableWebUI = true
 		}
 	}
 
@@ -278,6 +288,65 @@ func main() {
 	r := gin.Default()
 	r.Use(CORSMiddleware())
 	r.Use(AuthMiddleware(cfg))
+
+
+
+	// Serve Frontend
+	// Serve Frontend
+	if enableWebUI {
+		go func() {
+			uiRouter := gin.Default()
+			// Serve static files
+			uiRouter.Static("/static", "./web/static")
+			uiRouter.StaticFile("/index.html", "./web/index.html")
+			uiRouter.GET("/", func(c *gin.Context) {
+				c.File("./web/index.html")
+			})
+			
+			// Login Endpoint for WebUI
+			uiRouter.POST("/api/antigravity_login", func(c *gin.Context) {
+				// Start the login flow (listener + URL generation)
+				url, waitFunc, err := auth.StartLoginServer()
+				if err != nil {
+					log.Printf("WebUI Login failed to start: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Run the waiter in a goroutine
+				go func() {
+					acc, err := waitFunc()
+					if err != nil {
+						log.Printf("WebUI Login wait error: %v", err)
+						return
+					}
+					// Add the new account to the TokenManager
+					if acc != nil {
+						tm.AddAccount(acc.Email, acc.RefreshToken, false, 0, "")
+						log.Printf("Account %s added to TokenManager via WebUI", acc.Email)
+					}
+				}()
+
+				// Return the URL to the client immediately
+				c.JSON(http.StatusOK, gin.H{
+					"status": "pending",
+					"url":    url,
+				})
+			})
+
+
+			uiPort := 8046
+			uiHost := cfg.Server.Host
+			if uiHost == "" {
+				uiHost = "localhost"
+			}
+			addr := fmt.Sprintf("%s:%d", uiHost, uiPort)
+			log.Printf("Web UI started on http://%s:%d", uiHost, uiPort)
+			if err := uiRouter.Run(addr); err != nil {
+				log.Printf("Failed to start Web UI: %v", err)
+			}
+		}()
+	}
 
 	// Shared Handlers
 	chatHandler := chatCompletionsHandler(tm, up, cfg)
@@ -332,22 +401,56 @@ func main() {
 
 	}
 	modelsHandler := func(c *gin.Context) {
-		modelCacheMu.RLock()
-		currentModels := make([]string, len(modelCache))
-		copy(currentModels, modelCache)
-		modelCacheMu.RUnlock()
-
-		// If empty, try to fetch immediately (blocking)
-		if len(currentModels) == 0 {
-			updateModelCache(tm, up)
-			modelCacheMu.RLock()
-			currentModels = make([]string, len(modelCache))
-			copy(currentModels, modelCache)
-			modelCacheMu.RUnlock()
+		// Ensure we have at least one usable account before returning models
+		// This prevents the UI from thinking we are "logged in" just because it got a default list.
+		if _, err := tm.GetToken(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "No accounts available",
+			})
+			return
 		}
 
+		defaultModels := []string{
+			"gemini-2.5-pro",
+			"gemini-2.5-flash", 
+			"gpt-oss-120b-medium",
+			"claude-sonnet-4-5-thinking",
+			"gemini-3-pro-low",
+			"chat_23310",
+			"rev19-uic3-1p",
+			"claude-opus-4-5-thinking",
+			"gemini-2.5-flash-lite",
+			"gemini-3-pro-image",
+			"gemini-2.5-flash-thinking",
+			"gemini-3-flash",
+			"claude-sonnet-4-5",
+			"gemini-3-pro-high",
+			"chat_20706",
+		}
+
+		modelCacheMu.RLock()
+		cached := make(map[string]bool)
+		for _, m := range modelCache {
+			cached[m] = true
+		}
+		modelCacheMu.RUnlock()
+
+		log.Printf("[DEBUG] modelsHandler called. Default models count: %d", len(defaultModels))
+
+		// Merge default models
+		for _, m := range defaultModels {
+			cached[m] = true
+		}
+
+		var finalModels []string
+		for m := range cached {
+			finalModels = append(finalModels, m)
+		}
+		log.Printf("[DEBUG] Final models count: %d", len(finalModels))
+
+
 		models := []map[string]interface{}{}
-		for _, m := range currentModels {
+		for _, m := range finalModels {
 			models = append(models, map[string]interface{}{
 				"id":       m,
 				"object":   "model",
@@ -467,8 +570,14 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
-	log.Printf("Antigravity Proxy (Go) started on %s (Strategy: %s)", addr, cfg.Strategy.Type)
+
+
+	host := cfg.Server.Host
+	if host == "" {
+		host = "localhost"
+	}
+	addr := fmt.Sprintf("%s:%d", host, cfg.Server.Port)
+	log.Printf("Antigravity Proxy (Go) started on %s:%d (Strategy: %s)", host, cfg.Server.Port, cfg.Strategy.Type)
 	r.Run(addr)
 }
 

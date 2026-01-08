@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AntiMatter Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Marked.js for Markdown parsing -->
+    <script src="/static/js/marked.min.js"></script>
+    <!-- Highlight.js for code syntax highlighting -->
+    <link rel="stylesheet" href="/static/css/highlight.min.css">
+    <script src="/static/js/highlight.min.js"></script>
+    <!-- KaTeX for mathematical formulas -->
+    <link rel="stylesheet" href="/static/css/katex.min.css">
+    <script defer src="/static/js/katex.min.js"></script>
+    <script defer src="/static/js/katex-auto-render.min.js"></script>
+    <link rel="stylesheet" href="/static/css/style_website.css">
+</head>
+
+<body>
+
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            AntiMatter
+        </div>
+        <button class="new-chat-btn" id="new-chat-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            New Chat
+        </button>
+        <div class="history-list">
+            <div class="history-item">Recent Conversation</div>
+        </div>
+    </aside>
+
+    <main class="main-content">
+
+        <div class="model-selector-container" id="model-selector-container">
+            <span style="font-size: 0.8em; color: var(--text-secondary);">Model:</span>
+            <select id="model-select" class="model-selector">
+                <option value="gemini-3-flash">gemini-3-flash</option>
+                <option value="gemini-3-pro-high">gemini-3-pro-high</option>
+            </select>
+        </div>
+
+        <!-- Login View -->
+        <div id="login-view" class="login-view">
+            <div class="login-card">
+                <h2>Authentication Required</h2>
+                <p>No valid accounts were found. Please configure <code>settings.yaml</code> with your credentials.</p>
+                <div class="code-block">
+                    accounts:<br>
+                    &nbsp;&nbsp;- email: "your@email.com"<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;refresh_token: "YOUR_TOKEN"
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button id="login-btn" class="retry-btn" style="display: flex; align-items: center; gap: 8px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path
+                                d="M21.35 11.1h-9.17v2.98h5.24c-.27 1.67-1.65 4.51-5.24 4.51-3.21 0-5.83-2.61-5.83-5.84s2.62-5.84 5.83-5.84c1.68 0 3.19.64 4.3 1.7l2.25-2.25C17.07 4.7 15.06 4 12.18 4 7.69 4 4 7.69 4 12.19s3.69 8.19 8.18 8.19c4.72 0 7.89-3.32 7.89-8.03 0-.64-.06-1.12-.11-1.25z" />
+                        </svg>
+                        Login with Google
+                    </button>
+                    <button id="retry-btn" class="retry-btn"
+                        style="background: var(--input-bg); border: 1px solid var(--border-color);">Reload</button>
+                </div>
+                <p id="login-status" style="margin-top: 15px; font-size: 0.9em; min-height: 20px;"></p>
+            </div>
+        </div>
+
+        <div class="chat-container" id="chat-container">
+            <div class="message-wrapper">
+                <div class="message">
+                    <div class="avatar ai">AI</div>
+                    <div class="message-content">Hello! How can I help you today?</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <div class="input-box-wrapper">
+                <textarea id="user-input" class="input-box" placeholder="Message Antigravity..." rows="1"></textarea>
+                <button id="send-btn" class="send-btn" disabled>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M7 11L12 6L17 11M12 18V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" />
+                    </svg>
+                </button>
+                <button id="stop-btn" class="stop-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                    Stop
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/js/script_website.js"></script>
+</body>
+
+</html>

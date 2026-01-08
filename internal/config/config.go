@@ -31,7 +31,8 @@ type ModelsConfig struct {
 
 type Config struct {
 	Server struct {
-		Port int `yaml:"port"`
+		Port int    `yaml:"port"`
+		Host string `yaml:"host"` // IP address to bind to (e.g., "0.0.0.0", "192.168.1.100")
 	} `yaml:"server"`
 	Proxy    ProxyConfig     `yaml:"proxy"`
 	Models   ModelsConfig    `yaml:"models"`
@@ -45,6 +46,7 @@ func LoadConfig(path string) (*Config, error) {
 	// Defaults
 	cfg := &Config{}
 	cfg.Server.Port = 8045
+	cfg.Server.Host = "localhost" // Default to localhost
 	cfg.Proxy.AuthMode = "off"
 	cfg.Models.FallbackModel = "gemini-3-flash"
 	cfg.Strategy.Type = "round-robin"
@@ -73,6 +75,9 @@ func createExampleConfig(path string) error {
 	example := `# Antimatter Proxy Configuration
 server:
   port: 8045
+  # Host to bind to. Use "0.0.0.0" for all interfaces, "localhost" for local only,
+  # or a specific IP like "192.168.1.100" for a particular network interface
+  host: "localhost"
 
 proxy:
   # List of API keys that can access the proxy. If empty, anyone can access (unless mode=strict).
