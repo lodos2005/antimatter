@@ -2,12 +2,11 @@
 settings.yaml
 
 .DS_Store
-**.DS_Store
+**/.DS_Store
 
 # Traces
 trace*
-# Binaries
-proxy
+
 *.exe
 *.exe~
 *.dll
