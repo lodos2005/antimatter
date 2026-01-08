@@ -13,6 +13,173 @@ document.addEventListener('DOMContentLoaded', () => {
     const modelSelectorContainer = document.getElementById('model-selector-container');
     const inputContainer = document.querySelector('.input-container');
     const stopBtn = document.getElementById('stop-btn');
+    const menuToggle = document.getElementById('menu-toggle');
+    const sidebar = document.querySelector('.sidebar');
+    const sidebarOverlay = document.getElementById('sidebar-overlay');
+    const loginTriggerBtn = document.getElementById('login-trigger-btn');
+
+    // New Sign In View Elements
+    const signinView = document.getElementById('signin-view');
+    const closeSigninBtn = document.getElementById('close-signin-btn');
+    const signinGoogleBtn = document.getElementById('signin-google-btn');
+    const signinStatus = document.getElementById('signin-status');
+    const authEmail = document.getElementById('auth-email');
+    const authPassword = document.getElementById('auth-password');
+    const authLoginBtn = document.getElementById('auth-login-btn');
+    const authRegisterBtn = document.getElementById('auth-register-btn');
+
+    if (loginTriggerBtn) {
+        loginTriggerBtn.addEventListener('click', () => {
+            if (signinView) signinView.style.display = 'flex';
+        });
+    }
+
+    if (closeSigninBtn) {
+        closeSigninBtn.addEventListener('click', () => {
+            if (signinView) signinView.style.display = 'none';
+        });
+    }
+
+    // Register Logic
+    if (authRegisterBtn) {
+        authRegisterBtn.addEventListener('click', async () => {
+            const email = authEmail.value;
+            const password = authPassword.value;
+            if (!email || !password) {
+                signinStatus.textContent = 'Please fill in all fields';
+                signinStatus.style.color = '#ff6b6b';
+                return;
+            }
+
+            try {
+                signinStatus.textContent = 'Registering...';
+                const res = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Registration failed');
+
+                signinStatus.textContent = 'Registration successful! Please login.';
+                signinStatus.style.color = 'var(--accent-color)';
+            } catch (err) {
+                signinStatus.textContent = err.message;
+                signinStatus.style.color = '#ff6b6b';
+            }
+        });
+    }
+
+    // Login Logic
+    if (authLoginBtn) {
+        authLoginBtn.addEventListener('click', async () => {
+            const email = authEmail.value;
+            const password = authPassword.value;
+            if (!email || !password) {
+                signinStatus.textContent = 'Please fill in all fields';
+                signinStatus.style.color = '#ff6b6b';
+                return;
+            }
+
+            try {
+                signinStatus.textContent = 'Logging in...';
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Login failed');
+
+                signinStatus.textContent = 'Login successful!';
+                signinStatus.style.color = 'var(--accent-color)';
+
+                setTimeout(() => {
+                    if (signinView) signinView.style.display = 'none';
+                    location.reload();
+                }, 1000);
+
+            } catch (err) {
+                signinStatus.textContent = err.message;
+                signinStatus.style.color = '#ff6b6b';
+            }
+        });
+    }
+
+    // Reuse login logic for the new button
+    if (signinGoogleBtn) {
+        signinGoogleBtn.addEventListener('click', async () => {
+            if (signinStatus) {
+                signinStatus.style.color = 'var(--text-secondary)';
+                signinStatus.textContent = 'Opening login page...';
+            }
+            signinGoogleBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/antigravity_login', { method: 'POST' });
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error(errText || 'Login request failed');
+                }
+                const data = await res.json();
+
+                if (data.url) {
+                    window.open(data.url, '_blank');
+                    if (signinStatus) {
+                        signinStatus.style.color = 'var(--accent-color)';
+                        signinStatus.textContent = 'Login page opened. Waiting...';
+                    }
+
+                    // Poll for completion
+                    const pollInterval = setInterval(async () => {
+                        try {
+                            const mRes = await fetch(`${API_BASE}/v1/models`);
+                            if (mRes.ok) {
+                                clearInterval(pollInterval);
+                                location.reload();
+                            }
+                        } catch (e) {
+                            // ignore errors while polling
+                        }
+                    }, 2000);
+                } else {
+                    throw new Error('No login URL returned');
+                }
+            } catch (err) {
+                console.error('Login error:', err);
+                if (signinStatus) {
+                    signinStatus.style.color = '#ff6b6b';
+                    signinStatus.textContent = 'Error: ' + err.message;
+                }
+                signinGoogleBtn.disabled = false;
+            }
+        });
+    }
+
+    if (menuToggle) {
+        menuToggle.addEventListener('click', () => {
+            sidebar.classList.add('open');
+            sidebarOverlay.classList.add('visible');
+        });
+    }
+
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            sidebarOverlay.classList.remove('visible');
+        });
+    }
+
+    // Close sidebar on item click (mobile)
+    const historyItems = document.querySelectorAll('.history-item');
+    historyItems.forEach(item => {
+        item.addEventListener('click', () => {
+            if (window.innerWidth <= 768) {
+                sidebar.classList.remove('open');
+                sidebarOverlay.classList.remove('visible');
+            }
+        });
+    });
 
     let currentController = null;
     let editingWrapper = null;
@@ -40,6 +207,38 @@ document.addEventListener('DOMContentLoaded', () => {
         if (chatContainer) chatContainer.style.display = 'none';
         if (modelSelectorContainer) modelSelectorContainer.style.display = 'none';
         if (inputContainer) inputContainer.style.display = 'none';
+        if (modelSelect) {
+            modelSelect.innerHTML = '<option value="" disabled selected>Login Required</option>';
+        }
+
+        // Hide UI elements that shouldn't be visible when not authenticated
+        const mobileHeader = document.querySelector('.mobile-header');
+        const sidebar = document.querySelector('.sidebar');
+        const mainContent = document.querySelector('.main-content');
+        if (mobileHeader) mobileHeader.style.display = 'none';
+        if (sidebar) sidebar.style.display = 'none';
+        if (mainContent) {
+            mainContent.style.display = 'flex'; // Need main content visible because login is inside it
+        }
+    }
+
+    function showChat() {
+        if (loginView) loginView.style.display = 'none';
+        if (chatContainer) chatContainer.style.display = 'flex';
+        if (modelSelectorContainer) modelSelectorContainer.style.display = 'flex';
+        if (inputContainer) inputContainer.style.display = 'flex';
+
+        const mobileHeader = document.querySelector('.mobile-header');
+        const sidebar = document.querySelector('.sidebar');
+        const mainContent = document.querySelector('.main-content');
+
+        if (sidebar) sidebar.style.display = 'flex';
+        if (mainContent) mainContent.style.display = 'flex';
+
+        // Mobile header logic
+        if (mobileHeader && window.innerWidth <= 768) {
+            mobileHeader.style.display = 'flex';
+        }
     }
 
     if (retryBtn) {
@@ -194,41 +393,58 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(async res => {
             if (!res.ok) {
                 const errText = await res.text();
-                if (errText.includes('no accounts available')) {
+                if (errText.includes('no accounts available') || res.status === 401 || res.status === 403) {
                     showLogin();
-                    throw new Error('No accounts available');
+                    throw new Error('Authentication Required');
                 }
             }
             return res.json();
         })
         .then(data => {
-            if (data.data && Array.isArray(data.data) && data.data.length > 0) {
-                modelSelect.innerHTML = '';
+            console.log('Models Fetch Result:', data);
 
-                // Load exhausted models from localStorage
-                const exhaustedModels = JSON.parse(localStorage.getItem('exhaustedModels') || '[]');
+            if (!data || data.error || !data.data || !Array.isArray(data.data) || data.data.length === 0) {
+                console.warn('Authentication or No-Accounts detected. Triggering Login View.');
+                showLogin();
+                return;
+            }
 
-                data.data.forEach(model => {
-                    const option = document.createElement('option');
-                    option.value = model.id;
+            console.log('Authentication Successful. Loading models into UI.');
+            modelSelect.innerHTML = '';
+            showChat();
 
-                    // Check if this model is marked as exhausted
-                    if (exhaustedModels.includes(model.id)) {
-                        option.textContent = model.id + ' ⚠️';
-                        option.style.color = '#ff6b6b';
-                    } else {
-                        option.textContent = model.id;
-                    }
+            // Load exhausted models from localStorage
+            const exhaustedModels = JSON.parse(localStorage.getItem('exhaustedModels') || '[]');
 
-                    modelSelect.appendChild(option);
-                });
-                const savedModel = localStorage.getItem('selectedModel');
-                if (savedModel && data.data.find(m => m.id === savedModel)) {
-                    modelSelect.value = savedModel;
+            data.data.forEach(model => {
+                // Filter out models starting with 'chat_'
+                if (model.id.startsWith('chat_')) return;
+
+                const option = document.createElement('option');
+                option.value = model.id;
+
+                if (exhaustedModels.includes(model.id)) {
+                    option.textContent = model.id + ' ⚠️';
+                    option.style.color = '#ff6b6b';
+                } else {
+                    option.textContent = model.id;
                 }
+
+                modelSelect.appendChild(option);
+            });
+
+            const savedModel = localStorage.getItem('selectedModel');
+            if (savedModel && data.data.find(m => m.id === savedModel) && !savedModel.startsWith('chat_')) {
+                modelSelect.value = savedModel;
+            } else if (data.data.find(m => m.id === 'gemini-3-pro-image')) {
+                modelSelect.value = 'gemini-3-pro-image';
+                localStorage.setItem('selectedModel', 'gemini-3-pro-image');
             }
         })
-        .catch(err => console.error('Failed to fetch models:', err));
+        .catch(err => {
+            console.error('Failed to fetch models:', err);
+            showLogin();
+        });
 
     modelSelect.addEventListener('change', () => {
         localStorage.setItem('selectedModel', modelSelect.value);
@@ -276,7 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const originalTitle = document.title;
         document.title = "Thinking... | Antigravity";
 
-        const selectedModel = modelSelect.value || 'gemini-3-flash';
+        const selectedModel = modelSelect.value || 'gemini-3-pro-image';
 
         let isThinking = true;
         let fullContent = '';

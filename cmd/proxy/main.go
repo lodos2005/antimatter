@@ -5,6 +5,7 @@ import (
 	"antigravity-proxy-go/internal/config"
 	"antigravity-proxy-go/internal/mappers"
 	"antigravity-proxy-go/internal/upstream"
+	"antigravity-proxy-go/internal/users"
 	"bufio"
 	"encoding/json"
 	"fmt"
@@ -289,8 +290,6 @@ func main() {
 	r.Use(CORSMiddleware())
 	r.Use(AuthMiddleware(cfg))
 
-
-
 	// Serve Frontend
 	// Serve Frontend
 	if enableWebUI {
@@ -302,7 +301,7 @@ func main() {
 			uiRouter.GET("/", func(c *gin.Context) {
 				c.File("./web/index.html")
 			})
-			
+
 			// Login Endpoint for WebUI
 			uiRouter.POST("/api/antigravity_login", func(c *gin.Context) {
 				// Start the login flow (listener + URL generation)
@@ -334,6 +333,51 @@ func main() {
 				})
 			})
 
+			// Custom User Auth Routes
+			userManager, err := users.NewUserManager("users.json")
+			if err != nil {
+				log.Printf("Failed to init user manager: %v", err)
+			}
+
+			uiRouter.POST("/api/register", func(c *gin.Context) {
+				var req struct {
+					Email    string `json:"email"`
+					Password string `json:"password"`
+				}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+					return
+				}
+				if err := userManager.Register(req.Email, req.Password); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"message": "User registered successfully"})
+			})
+
+			uiRouter.POST("/api/login", func(c *gin.Context) {
+				var req struct {
+					Email    string `json:"email"`
+					Password string `json:"password"`
+				}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+					return
+				}
+				user, err := userManager.Login(req.Email, req.Password)
+				if err != nil {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+					return
+				}
+				// For now, simpler session handling: just return success.
+				// The client can behave as "logged in".
+				// Realistically we should issue a JWT token, but user instructions are simple.
+				// We return the user info.
+				c.JSON(http.StatusOK, gin.H{
+					"message": "Login successful",
+					"user":    user,
+				})
+			})
 
 			uiPort := 8046
 			uiHost := cfg.Server.Host
@@ -412,7 +456,7 @@ func main() {
 
 		defaultModels := []string{
 			"gemini-2.5-pro",
-			"gemini-2.5-flash", 
+			"gemini-2.5-flash",
 			"gpt-oss-120b-medium",
 			"claude-sonnet-4-5-thinking",
 			"gemini-3-pro-low",
@@ -447,7 +491,6 @@ func main() {
 			finalModels = append(finalModels, m)
 		}
 		log.Printf("[DEBUG] Final models count: %d", len(finalModels))
-
 
 		models := []map[string]interface{}{}
 		for _, m := range finalModels {
@@ -569,8 +612,6 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-
-
 
 	host := cfg.Server.Host
 	if host == "" {
