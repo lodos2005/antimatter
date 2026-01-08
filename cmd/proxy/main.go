@@ -5,7 +5,6 @@ import (
 	"antigravity-proxy-go/internal/config"
 	"antigravity-proxy-go/internal/mappers"
 	"antigravity-proxy-go/internal/upstream"
-	"antigravity-proxy-go/internal/users"
 	"bufio"
 	"encoding/json"
 	"fmt"
@@ -330,52 +329,6 @@ func main() {
 				c.JSON(http.StatusOK, gin.H{
 					"status": "pending",
 					"url":    url,
-				})
-			})
-
-			// Custom User Auth Routes
-			userManager, err := users.NewUserManager("users.json")
-			if err != nil {
-				log.Printf("Failed to init user manager: %v", err)
-			}
-
-			uiRouter.POST("/api/register", func(c *gin.Context) {
-				var req struct {
-					Email    string `json:"email"`
-					Password string `json:"password"`
-				}
-				if err := c.ShouldBindJSON(&req); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-					return
-				}
-				if err := userManager.Register(req.Email, req.Password); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-					return
-				}
-				c.JSON(http.StatusOK, gin.H{"message": "User registered successfully"})
-			})
-
-			uiRouter.POST("/api/login", func(c *gin.Context) {
-				var req struct {
-					Email    string `json:"email"`
-					Password string `json:"password"`
-				}
-				if err := c.ShouldBindJSON(&req); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-					return
-				}
-				user, err := userManager.Login(req.Email, req.Password)
-				if err != nil {
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
-					return
-				}
-				// For now, simpler session handling: just return success.
-				// The client can behave as "logged in".
-				// Realistically we should issue a JWT token, but user instructions are simple.
-				// We return the user info.
-				c.JSON(http.StatusOK, gin.H{
-					"message": "Login successful",
-					"user":    user,
 				})
 			})
 
