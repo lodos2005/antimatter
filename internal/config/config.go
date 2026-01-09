@@ -45,11 +45,16 @@ type Config struct {
 	Models   ModelsConfig    `yaml:"models" json:"models"`
 	Admin    AdminConfig     `yaml:"admin" json:"admin"`
 	Strategy StrategyConfig  `yaml:"strategy" json:"strategy"`
+	Session  SessionConfig   `yaml:"session" json:"session"`
 	Accounts []AccountConfig `yaml:"accounts" json:"accounts"`
 }
 
 type StrategyConfig struct {
 	Type string `yaml:"type" json:"type"`
+}
+
+type SessionConfig struct {
+	WebUIRequestLimit int `yaml:"webui_request_limit" json:"webui_request_limit"`
 }
 
 // LoadConfig loads the configuration from a YAML file
@@ -68,7 +73,15 @@ func LoadConfig(path string) (*Config, error) {
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		// If unmarshal fails, we might still want to try returning partial config, or just error.
+		// For robustness, if new fields like Session are missing in user's old config but present in struct,
+		// yaml.Unmarshal usually handles it (zero values). 
 		return nil, err
+	}
+	
+	// Ensure positive limit if negative
+	if cfg.Session.WebUIRequestLimit < 0 {
+		cfg.Session.WebUIRequestLimit = -cfg.Session.WebUIRequestLimit
 	}
 
 	return &cfg, nil
@@ -114,6 +127,11 @@ admin:
 #   - sequential: Use the first account until it fails (429/401), then switch to the next.
 strategy:
   type: round-robin
+
+session:
+  # Limit number of chat requests per specific WebUI session.
+  # 0 = Unlimited. > 0 = Limit.
+  webui_request_limit: 50
 
 accounts:
   # - email: "example@gmail.com"

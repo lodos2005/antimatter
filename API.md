@@ -53,6 +53,23 @@ Generate text or chat responses using Gemini models via an OpenAI-compatible int
 }
 ```
 
+#### Example Request
+
+```bash
+curl -X POST http://localhost:8045/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-your-api-key" \
+  -d '{
+    "model": "gemini-3-flash",
+    "messages": [
+        { "role": "system", "content": "You are a helpful assistant." },
+        { "role": "user", "content": "Explain quantum physics in simple terms." }
+    ],
+    "stream": true,
+    "temperature": 0.7
+  }'
+```
+
 **Response (Streamed):**
 Server-Sent Events (SSE) stream, compatible with OpenAI clients.
 
@@ -72,6 +89,13 @@ Server-Sent Events (SSE) stream, compatible with OpenAI clients.
 Retrieve available models from the upstream provider.
 
 - **Endpoint**: `GET /v1/models`
+
+#### Example Request
+
+```bash
+curl http://localhost:8045/v1/models \
+  -H "Authorization: Bearer sk-your-api-key"
+```
 
 **Response:**
 ```json
@@ -95,60 +119,153 @@ Check if the proxy is running.
 { "status": "ok" }
 ```
 
+#### Example Request
+
+```bash
+curl http://localhost:8045/health
+```
+```
+
 ---
 
 ## Admin API (Private)
 
-These endpoints allow management of the proxy server. They operate on a separate session-based authentication system (Admin Panel Login).
 
-**Base Path**: `/api/admin`
 
-### Authentication
+### Authentication & Admin API Access
 
-#### Login
+The Admin API supports two authentication methods:
+
+1. **Bearer Token (Recommended for Scripts)**: Use your `admin.password` from `settings.yaml` as the Bearer token. **No CSRF token is required** when using this method.
+2. **Browser Session**: Used by the Web UI. Relies on `admin_session` cookie and requires `X-CSRF-Token` header for state-changing requests.
+
+#### 1. Login (Browser Session Only)
+(Only needed if you are NOT using the Bearer token method)
+
 - **Endpoint**: `POST /api/admin/login`
-- **Body**: `{ "password": "your-admin-password" }`
-- **Response**: Sets `admin_session` cookie.
 
-#### Logout
+**Request:**
+```bash
+curl -c cookies.txt -X POST http://localhost:8045/api/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{ "password": "your-admin-password" }'
+```
+
+#### 2. Logout (Browser Session Only)
 - **Endpoint**: `POST /api/admin/logout`
+
+---
 
 ### Dashboard Data
 
-#### Get Statistics
+#### 3. Get Statistics
 Returns aggregated usage stats (token counts, request counts).
+
 - **Endpoint**: `GET /api/admin/stats`
 
-#### Get Recent Logs
+**Request (Using Bearer Token):**
+```bash
+curl http://localhost:8045/api/admin/stats \
+  -H "Authorization: Bearer your-admin-password"
+```
+
+#### 4. Get Recent Logs
 Returns a list of recent request logs.
+
 - **Endpoint**: `GET /api/admin/logs?limit=50`
 
-#### Get Sessions
-Returns grouped session history.
-- **Endpoint**: `GET /api/admin/sessions?page=1&limit=10`
+**Request:**
+```bash
+curl "http://localhost:8045/api/admin/logs?limit=20" \
+  -H "Authorization: Bearer your-admin-password"
+```
 
-#### Get Session Details
+#### 5. Get Sessions
+Returns grouped session history.
+
+- **Endpoint**: `GET /api/admin/sessions`
+
+**Request:**
+```bash
+curl "http://localhost:8045/api/admin/sessions?page=1&limit=5" \
+  -H "Authorization: Bearer your-admin-password"
+```
+
+#### 6. Get Session Details
 Returns full message history for a specific session ID.
+
 - **Endpoint**: `GET /api/admin/session/:session_id`
+
+**Request:**
+```bash
+curl http://localhost:8045/api/admin/session/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer your-admin-password"
+```
+
+---
 
 ### Configuration Management
 
-#### Get Config settings
+#### 7. Get Config Settings
 - **Endpoint**: `GET /api/admin/config`
 
-#### Update Config settings
+**Request:**
+```bash
+curl http://localhost:8045/api/admin/config \
+  -H "Authorization: Bearer your-admin-password"
+```
+
+#### 8. Update Config Settings
 - **Endpoint**: `POST /api/admin/config`
-- **Body**: JSON object matching the `Config` struct.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8045/api/admin/config \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-admin-password" \
+  -d '{
+    "server": { "port": 8045 },
+    "proxy": { "debug": true }
+  }'
+```
+
+---
 
 ### API Key Management
 
-#### List API Keys
+#### 9. List API Keys
 - **Endpoint**: `GET /api/admin/keys`
 
-#### Create API Key
-- **Endpoint**: `POST /api/admin/keys`
-- **Body**: `{ "name": "My Application" }`
-- **Response**: `{ "key": "sk-...", "name": "..." }`
+**Request:**
+```bash
+curl http://localhost:8045/api/admin/keys \
+  -H "Authorization: Bearer your-admin-password"
+```
 
-#### Delete API Key
+#### 10. Create API Key
+- **Endpoint**: `POST /api/admin/keys`
+
+**Request:**
+```bash
+curl -X POST http://localhost:8045/api/admin/keys \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-admin-password" \
+  -d '{ "name": "MyApp Production" }'
+```
+
+**Response:**
+```json
+{
+  "key": "sk-7f8a9d...",
+  "name": "MyApp Production"
+}
+```
+
+#### 11. Delete API Key
 - **Endpoint**: `DELETE /api/admin/keys/:key`
+
+**Request:**
+```bash
+curl -X DELETE http://localhost:8045/api/admin/keys/sk-7f8a9d... \
+  -H "Authorization: Bearer your-admin-password"
+```

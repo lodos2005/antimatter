@@ -216,6 +216,17 @@ document.addEventListener('DOMContentLoaded', () => {
         authHeaders['Authorization'] = `Bearer ${storedKey}`;
     }
 
+    // CSRF Helper
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+    const csrfToken = getCookie('csrf_token');
+    if (csrfToken) {
+        authHeaders['X-CSRF-Token'] = csrfToken;
+    }
+
     fetch(`${API_BASE}/v1/models`, {
         headers: authHeaders
     })

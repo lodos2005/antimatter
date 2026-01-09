@@ -479,3 +479,13 @@ func DeleteAPIKey(key string) error {
 	_, err := DB.Exec("DELETE FROM api_keys WHERE key = ?", key)
 	return err
 }
+
+// GetSessionRequestCount returns the number of requests made by a specific session ID
+func GetSessionRequestCount(sessionID string) (int, error) {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM request_logs WHERE session_id = ?", sessionID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}

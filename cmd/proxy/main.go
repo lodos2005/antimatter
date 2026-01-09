@@ -147,18 +147,31 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			}
 		}
 
-		// 3. Check Session Cookie (Google Login / User Session)
+		// 3. Check Session Cookie (WebUI Session)
 		if !authorized {
-			tokenString, err := c.Cookie("antimatter_token")
-			if err == nil && tokenString != "" {
-				token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-					return []byte(cfg.Admin.JWTSecret), nil
-				})
-				if err == nil && token.Valid {
-					if claims, ok := token.Claims.(jwt.MapClaims); ok {
-						c.Set("userID", claims["email"])
-						c.Set("auth_method", "session")
-						authorized = true
+			// Check for the ephemeral session ID assigned to WebUI visitors
+			sessionID, err := c.Cookie("antimatter_session")
+			if err == nil && sessionID != "" {
+				// We accept the session cookie as proof of WebUI access
+				// This acts like a temporary API key for the browser session
+				c.Set("userID", "session_"+sessionID)
+				c.Set("auth_method", "session")
+				authorized = true
+			}
+			
+			// Legacy/Future: Check for signed JWT token if we implement full login later
+			if !authorized {
+				tokenString, err := c.Cookie("antimatter_token")
+				if err == nil && tokenString != "" {
+					token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+						return []byte(cfg.Admin.JWTSecret), nil
+					})
+					if err == nil && token.Valid {
+						if claims, ok := token.Claims.(jwt.MapClaims); ok {
+							c.Set("userID", claims["email"])
+							c.Set("auth_method", "jwt_token")
+							authorized = true
+						}
 					}
 				}
 			}
@@ -193,6 +206,31 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
+
+		// CSRF Check for WebUI Session
+		// If authenticated via Session Cookie, enforce CSRF for state-changing requests (like Chat)
+		if authorized {
+			authMethod, _ := c.Get("auth_method")
+			if authMethod == "session" {
+				// For WebUI sessions, we require CSRF token for POST/PUT/DELETE
+				if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" {
+					csrfCookie, _ := c.Cookie("csrf_token")
+					csrfHeader := c.GetHeader("X-CSRF-Token")
+					
+					// Special case: If no CSRF cookie exists yet for a new session, we might be lenient OR 
+					// the frontend should have fetched it.
+					// Actually, allow if both are missing? No, that defeats the point.
+					// But we need to ensure the frontend GETs a CSRF token first.
+					// We'll set a CSRF cookie on the index page load (handled in indexHandler).
+					
+					if csrfCookie == "" || csrfHeader == "" || csrfCookie != csrfHeader {
+						c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "CSRF token mismatch"})
+						return
+					}
+				}
+			}
+		}
+
 		c.Set("userID", apiKey)
 		c.Next()
 	}
@@ -200,53 +238,84 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 
 func AdminMiddleware(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if cfg.Admin.Enabled {
-			// Validate JWT
-			sessionToken, err := c.Cookie("admin_session")
-			if err != nil || sessionToken == "" {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		if !cfg.Admin.Enabled {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+
+		// 1. Check for Direct Admin Password or JWT in Header (Scripts/API) - Bypasses CSRF
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" {
+			tokenVal := strings.TrimPrefix(authHeader, "Bearer ")
+			// Allow using the Admin Password directly as a Bearer token
+			if tokenVal == cfg.Admin.Password {
+				c.Set("admin_user", "admin_direct")
+				c.Next()
 				return
 			}
 
-			token, err := jwt.Parse(sessionToken, func(token *jwt.Token) (interface{}, error) {
+			// Allow using a valid session JWT as a Bearer token
+			token, err := jwt.Parse(tokenVal, func(token *jwt.Token) (interface{}, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 				}
 				key := cfg.Admin.JWTSecret
 				if key == "" {
-					key = "default-secret-change-me" // Fallback
+					key = "default-secret-change-me"
 				}
 				return []byte(key), nil
 			})
-
-			if err != nil || !token.Valid {
-				c.SetCookie("admin_session", "", -1, "/", "", false, true)
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid session"})
-				return
-			}
-
-			// Blacklist Check
-			if database.IsTokenRevoked(token.Raw) {
-				c.SetCookie("admin_session", "", -1, "/", "", false, true)
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
-				return
-			}
-
-			// CSRF Check for mutating requests
-			if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" {
-				csrfCookie, _ := c.Cookie("csrf_token")
-				csrfHeader := c.GetHeader("X-CSRF-Token")
-				if csrfCookie == "" || csrfHeader == "" || csrfCookie != csrfHeader {
-					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "CSRF token mismatch"})
+			if err == nil && token.Valid {
+				if !database.IsTokenRevoked(token.Raw) {
+					c.Set("admin_user", "admin_jwt_header")
+					c.Next()
 					return
 				}
 			}
-
-			c.Next()
-		} else {
-			// If admin is disabled, block access
-			c.AbortWithStatus(http.StatusForbidden)
 		}
+
+		// 2. Browser Session Auth (Cookie) - Requires CSRF
+		sessionToken, err := c.Cookie("admin_session")
+		if err != nil || sessionToken == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+
+		token, err := jwt.Parse(sessionToken, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			key := cfg.Admin.JWTSecret
+			if key == "" {
+				key = "default-secret-change-me" // Fallback
+			}
+			return []byte(key), nil
+		})
+
+		if err != nil || !token.Valid {
+			c.SetCookie("admin_session", "", -1, "/", "", false, true)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid session"})
+			return
+		}
+
+		// Blacklist Check
+		if database.IsTokenRevoked(token.Raw) {
+			c.SetCookie("admin_session", "", -1, "/", "", false, true)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
+			return
+		}
+
+		// CSRF Check for mutating requests (Only for Cookie Auth)
+		if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" {
+			csrfCookie, _ := c.Cookie("csrf_token")
+			csrfHeader := c.GetHeader("X-CSRF-Token")
+			if csrfCookie == "" || csrfHeader == "" || csrfCookie != csrfHeader {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "CSRF token mismatch"})
+				return
+			}
+		}
+
+		c.Next()
 	}
 }
 
@@ -287,8 +356,25 @@ func chatCompletionsHandler(tm *auth.TokenManager, up *upstream.Client, cfg *con
 		}
 
 		modelCacheMu.RLock()
-		model := resolveModel(requestedModel, cfg)
+	model := resolveModel(requestedModel, cfg)
 		modelCacheMu.RUnlock()
+
+		// Enforce WebUI Session Limit
+		// Check if this is a WebUI session based on auth method or cookie presence
+		authMethod, _ := c.Get("auth_method")
+		// "session" is set in AuthMiddleware for cookie-based auth
+		if authMethod == "session" && cfg.Session.WebUIRequestLimit > 0 {
+			sessionID, err := c.Cookie("antimatter_session")
+			if err == nil && sessionID != "" {
+				count, err := database.GetSessionRequestCount(sessionID)
+				if err == nil && count >= cfg.Session.WebUIRequestLimit {
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+						"error": fmt.Sprintf("Session request limit reached (%d/%d). Please refresh your session or contact admin.", count, cfg.Session.WebUIRequestLimit),
+					})
+					return
+				}
+			}
+		}
 
 		if cfg.Proxy.Debug {
 			trace.WriteString(fmt.Sprintf("Resolved Model: %s\n", model))
@@ -587,6 +673,11 @@ func main() {
 		newSessionID := uuid.New().String()
 		// Set cookie: name, value, maxAge (0=session), path, domain, secure, httpOnly
 		c.SetCookie("antimatter_session", newSessionID, 0, "/", "", false, true)
+		
+		// Set CSRF Token cookie (readable by JS)
+		csrfToken := uuid.New().String()
+		c.SetCookie("csrf_token", csrfToken, 0, "/", "", false, false) // HttpOnly=false
+
 		c.File("./web/index.html")
 	}
 	r.GET("/index.html", indexHandler)
