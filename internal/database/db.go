@@ -84,13 +84,17 @@ func createTables() error {
 	// A simple brute-force ALTER is fine for now; if it fails (exists), we ignore.
 	if err == nil {
 		migration := "ALTER TABLE request_logs ADD COLUMN prompt TEXT;"
-		DB.Exec(migration) // Ignore error if column exists
+		DB.Exec(migration)
 
 		migration2 := "ALTER TABLE request_logs ADD COLUMN response TEXT;"
 		DB.Exec(migration2)
 
 		migration3 := "ALTER TABLE request_logs ADD COLUMN session_id TEXT;"
 		DB.Exec(migration3)
+
+		// New migration for API Key expiration
+		migrationKeys := "ALTER TABLE api_keys ADD COLUMN expires_at DATETIME;"
+		DB.Exec(migrationKeys)
 	}
 
 	return err
@@ -403,25 +407,35 @@ type User struct {
 }
 
 type APIKey struct {
-	Key       string    `json:"key"`
-	UserID    int64     `json:"user_id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	Key       string       `json:"key"`
+	UserID    int64        `json:"user_id"`
+	Name      string       `json:"name"`
+	CreatedAt time.Time    `json:"created_at"`
+	ExpiresAt sql.NullTime `json:"expires_at"` // Null means never expires
 }
 
-// ValidateAPIKey checks if the key exists in the database
+// ValidateAPIKey checks if the key exists and is not expired
 func ValidateAPIKey(key string) (bool, error) {
-	var count int
-	err := DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE key = ?", key).Scan(&count)
+	var expiresAt sql.NullTime
+	err := DB.QueryRow("SELECT expires_at FROM api_keys WHERE key = ?", key).Scan(&expiresAt)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	return count > 0, nil
+
+	// Check expiration if set
+	if expiresAt.Valid && time.Now().After(expiresAt.Time) {
+		return false, nil // Expired
+	}
+
+	return true, nil
 }
 
 // CreateAPIKey adds a new API key
-func CreateAPIKey(key string, userID int64, name string) error {
-	_, err := DB.Exec("INSERT INTO api_keys (key, user_id, name) VALUES (?, ?, ?)", key, userID, name)
+func CreateAPIKey(key string, userID int64, name string, expiresAt *time.Time) error {
+	_, err := DB.Exec("INSERT INTO api_keys (key, user_id, name, expires_at) VALUES (?, ?, ?, ?)", key, userID, name, expiresAt)
 	return err
 }
 
@@ -449,7 +463,7 @@ func CreateUser(email, googleSub string) (int64, error) {
 
 // GetAPIKeys lists all API keys
 func GetAPIKeys() ([]APIKey, error) {
-	rows, err := DB.Query("SELECT key, user_id, name, created_at FROM api_keys ORDER BY created_at DESC")
+	rows, err := DB.Query("SELECT key, user_id, name, created_at, expires_at FROM api_keys ORDER BY created_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +474,8 @@ func GetAPIKeys() ([]APIKey, error) {
 		var k APIKey
 		var name sql.NullString
 		var userID sql.NullInt64
-		if err := rows.Scan(&k.Key, &userID, &name, &k.CreatedAt); err != nil {
+		// Scan expires_at as well
+		if err := rows.Scan(&k.Key, &userID, &name, &k.CreatedAt, &k.ExpiresAt); err != nil {
 			return nil, err
 		}
 		if name.Valid {

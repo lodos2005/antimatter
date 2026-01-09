@@ -1268,11 +1268,53 @@ func main() {
 
 			uiAdmin.POST("/keys", func(c *gin.Context) {
 				var req struct {
-					Name string `json:"name"`
+					Name      string `json:"name"`
+					ExpiresIn string `json:"expires_in"` // "1h", "24h", "7d", "30d"
+					ExpiresAt string `json:"expires_at"` // ISO string for custom date
 				}
 				if err := c.BindJSON(&req); err != nil {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 					return
+				}
+
+				// Calculate expiration
+				var expiresAtParams *time.Time
+
+				// 1. Check for specific date (Custom)
+				if req.ExpiresAt != "" {
+					parsedTime, err := time.Parse(time.RFC3339, req.ExpiresAt)
+					if err != nil {
+						// Try slightly more lenient parsing if needed, or just strict ISO
+						c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format. Use ISO 8601/RFC3339"})
+						return
+					}
+					if parsedTime.Before(time.Now()) {
+						c.JSON(http.StatusBadRequest, gin.H{"error": "Expiration date must be in the future"})
+						return
+					}
+					expiresAtParams = &parsedTime
+				} else if req.ExpiresIn != "" && req.ExpiresIn != "never" {
+					// 2. Check for duration
+					var duration time.Duration
+					switch req.ExpiresIn {
+					case "1h":
+						duration = 1 * time.Hour
+					case "24h":
+						duration = 24 * time.Hour
+					case "7d":
+						duration = 7 * 24 * time.Hour
+					case "30d":
+						duration = 30 * 24 * time.Hour
+					default:
+						if d, err := time.ParseDuration(req.ExpiresIn); err == nil {
+							duration = d
+						}
+					}
+
+					if duration > 0 {
+						t := time.Now().Add(duration)
+						expiresAtParams = &t
+					}
 				}
 
 				// Generate random key
@@ -1283,12 +1325,12 @@ func main() {
 				}
 				key := "sk-" + hex.EncodeToString(bytes)
 
-				if err := database.CreateAPIKey(key, 0, req.Name); err != nil {
+				if err := database.CreateAPIKey(key, 0, req.Name, expiresAtParams); err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
 
-				c.JSON(http.StatusOK, gin.H{"key": key, "name": req.Name})
+				c.JSON(http.StatusOK, gin.H{"key": key, "name": req.Name, "expires_at": expiresAtParams})
 			})
 
 			uiAdmin.DELETE("/keys/:key", func(c *gin.Context) {

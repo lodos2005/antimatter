@@ -554,20 +554,37 @@ async function loadKeys() {
                         <th style="padding: 12px; color: #888;">Name</th>
                         <th style="padding: 12px; color: #888;">Key</th>
                         <th style="padding: 12px; color: #888;">Created</th>
+                        <th style="padding: 12px; color: #888;">Expires</th>
                         <th style="padding: 12px; color: #888; text-align: right;">Action</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${data.keys.map(k => `
-                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    ${data.keys.map(k => {
+            let expiresText = 'Never';
+            let rowStyle = 'border-bottom: 1px solid rgba(255,255,255,0.05);';
+
+            if (k.expires_at && k.expires_at.Valid) {
+                const expDate = new Date(k.expires_at.Time);
+                expiresText = expDate.toLocaleString();
+
+                // Highlight expired keys
+                if (expDate < new Date()) {
+                    expiresText += ' <span style="color: #ef4444; font-weight: bold; font-size: 0.8em; border: 1px solid #ef4444; border-radius: 4px; padding: 1px 4px; margin-left: 4px;">EXPIRED</span>';
+                    rowStyle += ' opacity: 0.6;';
+                }
+            }
+
+            return `
+                        <tr style="${rowStyle}">
                             <td style="padding: 12px; color: #eee;">${escapeHtml(k.name || 'Unnamed')}</td>
                             <td style="padding: 12px; font-family: monospace; color: #a78bfa;">${escapeHtml(k.key)}</td>
                             <td style="padding: 12px; color: #666;">${new Date(k.created_at).toLocaleDateString()}</td>
+                            <td style="padding: 12px; color: #888; font-size: 0.9em;">${expiresText}</td>
                             <td style="padding: 12px; text-align: right;">
                                 <button onclick="deleteKey('${k.key}')" style="background: rgba(220, 38, 38, 0.2); color: #f87171; border: 1px solid rgba(220, 38, 38, 0.3); padding: 6px 12px; border-radius: 6px; cursor: pointer;">Delete</button>
                             </td>
                         </tr>
-                    `).join('')}
+                    `}).join('')}
                 </tbody>
             </table>
         `;
@@ -584,50 +601,93 @@ function updateCurlExamples() {
     const modelsEl = document.getElementById('code-models');
     const anthropicEl = document.getElementById('code-anthropic');
 
+    // Simple OS detection
+    const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
+
+    // Helper to format JSON payload based on OS
+    const formatBody = (obj) => {
+        const json = JSON.stringify(obj);
+        if (isWindows) {
+            // Windows CMD: -d "{\"key\": \"value\"}"
+            return `"${json.replace(/"/g, '\\"')}"`;
+        } else {
+            // Bash/Linux/Mac: -d '{"key": "value"}'
+            return `'${json}'`;
+        }
+    };
+
     if (chatEl) {
-        chatEl.textContent = `curl ${API_BASE}/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer ${key}" \\
-  -d '{
-    "model": "${model}",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Hello!"}
-    ]
-  }'`;
+        const body = {
+            model: model,
+            messages: [
+                { role: "system", content: "You are a helpful assistant." },
+                { role: "user", content: "Hello!" }
+            ]
+        };
+        chatEl.textContent = `curl ${API_BASE}/v1/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer ${key}" -d ${formatBody(body)}`;
     }
 
     if (modelsEl) {
-        modelsEl.textContent = `curl ${API_BASE}/v1/models \\
-  -H "Authorization: Bearer ${key}"`;
+        modelsEl.textContent = `curl ${API_BASE}/v1/models -H "Authorization: Bearer ${key}"`;
     }
 
     if (anthropicEl) {
-        // Map model to something anthropic-like if desired, or keep generic
-        // but user selected generic models. 
-        anthropicEl.textContent = `curl ${API_BASE}/v1/messages \\
-  -H "x-api-key: ${key}" \\
-  -H "anthropic-version: 2023-06-01" \\
-  -H "content-type: application/json" \\
-  -d '{
-    "model": "${model}", 
-    "max_tokens": 1024,
-    "messages": [
-        {"role": "user", "content": "Hello, world"}
-    ]
-}'`;
+        const body = {
+            model: model,
+            max_tokens: 1024,
+            messages: [
+                { role: "user", content: "Hello, world" }
+            ]
+        };
+        anthropicEl.textContent = `curl ${API_BASE}/v1/messages -H "x-api-key: ${key}" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" -d ${formatBody(body)}`;
     }
 }
 
 // Open the Create Key Modal
 function createKey() {
-    document.getElementById('new-key-name').value = ''; // Reset input
+    document.getElementById('new-key-name').value = '';
+    const expSelect = document.getElementById('new-key-expires');
+    expSelect.value = 'never';
+    document.getElementById('custom-expires-container').style.display = 'none';
+
+    // Set default custom date to tomorrow
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setMinutes(tomorrow.getMinutes() - tomorrow.getTimezoneOffset());
+    document.getElementById('new-key-custom-date').value = tomorrow.toISOString().slice(0, 16);
+
     document.getElementById('create-key-modal').showModal();
 }
+
+// Toggle Custom Date Input
+document.addEventListener('DOMContentLoaded', () => {
+    const expSelect = document.getElementById('new-key-expires');
+    if (expSelect) {
+        expSelect.addEventListener('change', (e) => {
+            const container = document.getElementById('custom-expires-container');
+            container.style.display = e.target.value === 'custom' ? 'block' : 'none';
+        });
+    }
+});
 
 // Handle Modal Submission
 async function submitCreateKey() {
     const name = document.getElementById('new-key-name').value || 'Unnamed Key';
+    const expiresIn = document.getElementById('new-key-expires').value;
+
+    let payload = { name };
+
+    if (expiresIn === 'custom') {
+        const dateVal = document.getElementById('new-key-custom-date').value;
+        if (!dateVal) {
+            alert("Please select a date and time");
+            return;
+        }
+        // Convert local time to ISO string
+        payload.expires_at = new Date(dateVal).toISOString();
+    } else {
+        payload.expires_in = expiresIn;
+    }
 
     try {
         const res = await fetch(`${API_BASE}/api/admin/keys`, {
@@ -636,7 +696,7 @@ async function submitCreateKey() {
                 'Content-Type': 'application/json',
                 'X-CSRF-Token': getCookie('csrf_token')
             },
-            body: JSON.stringify({ name })
+            body: JSON.stringify(payload)
         });
 
         if (res.ok) {
@@ -893,5 +953,32 @@ async function loginWithGoogle() {
     } catch (e) {
         console.error('Error starting Google login:', e);
         alert('Failed to start Google login: ' + e.message);
+    }
+}
+
+// Clipboard Helper
+async function copyCode(elementId, btn) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+
+    try {
+        await navigator.clipboard.writeText(el.textContent);
+
+        // Visual feedback
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.background = 'rgba(74, 222, 128, 0.2)';
+        btn.style.color = '#4ade80';
+        btn.style.borderColor = 'rgba(74, 222, 128, 0.3)';
+
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.style.background = '';
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }, 2000);
+    } catch (err) {
+        console.error('Failed to copy: ', err);
+        btn.textContent = 'Error';
     }
 }

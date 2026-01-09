@@ -957,13 +957,35 @@
                         <p style="margin: 0 0 20px 0; color: #888; font-size: 0.9em;">Create a new access token for
                             remote connections</p>
 
-                        <div style="margin-bottom: 24px;">
+                        <div style="margin-bottom: 16px;">
                             <label
                                 style="display: block; margin-bottom: 6px; color: #ccc; font-weight: 500; font-size: 0.9em;">Name
                                 (Optional)</label>
                             <input type="text" id="new-key-name" class="admin-login-input"
                                 placeholder="e.g. 'Laptop', 'App 1'"
                                 style="width: 100%; box-sizing: border-box; padding: 10px 12px; margin: 0;">
+                        </div>
+
+                        <div style="margin-bottom: 24px;">
+                            <label
+                                style="display: block; margin-bottom: 6px; color: #ccc; font-weight: 500; font-size: 0.9em;">Expiration</label>
+                            <select id="new-key-expires" class="admin-login-input"
+                                style="width: 100%; box-sizing: border-box; padding: 10px 12px; margin: 0;">
+                                <option value="never">Never (Unlimited)</option>
+                                <option value="1h">1 Hour</option>
+                                <option value="24h">24 Hours</option>
+                                <option value="7d">7 Days</option>
+                                <option value="30d">30 Days</option>
+                                <option value="custom">Custom Date...</option>
+                            </select>
+
+                            <div id="custom-expires-container" style="display: none; margin-top: 10px;">
+                                <label
+                                    style="display: block; margin-bottom: 6px; color: #aaa; font-size: 0.85em;">Select
+                                    Date & Time</label>
+                                <input type="datetime-local" id="new-key-custom-date" class="admin-login-input"
+                                    style="width: 100%; box-sizing: border-box; padding: 10px 12px; margin: 0; color-scheme: dark;">
+                            </div>
                         </div>
 
                         <div style="display: flex; justify-content: flex-end; gap: 12px;">
@@ -1043,6 +1065,8 @@
                         .code-block {
                             background: #0f1115;
                             padding: 15px;
+                            padding-right: 70px;
+                            /* Space for copy button */
                             border-radius: 6px;
                             font-family: monospace;
                             font-size: 0.9em;
@@ -1050,6 +1074,30 @@
                             overflow-x: auto;
                             white-space: pre-wrap;
                             border: 1px solid rgba(255, 255, 255, 0.1);
+                            margin: 0;
+                        }
+
+                        .code-container {
+                            position: relative;
+                        }
+
+                        .copy-btn {
+                            position: absolute;
+                            top: 8px;
+                            right: 8px;
+                            background: rgba(255, 255, 255, 0.1);
+                            border: 1px solid rgba(255, 255, 255, 0.2);
+                            color: #ccc;
+                            border-radius: 4px;
+                            padding: 4px 8px;
+                            font-size: 0.8em;
+                            cursor: pointer;
+                            transition: all 0.2s;
+                        }
+
+                        .copy-btn:hover {
+                            background: rgba(255, 255, 255, 0.2);
+                            color: #fff;
                         }
                     </style>
 
@@ -1058,16 +1106,11 @@
                         <div class="content">
                             <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Standard
                                 OpenAI-compatible chat completion endpoint.</p>
-                            <pre class="code-block" id="code-chat">curl http://localhost:8045/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;" \
-  -d '{
-    "model": "gemini-3-flash",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Hello!"}
-    ]
-  }'</pre>
+                            <div class="code-container">
+                                <pre class="code-block"
+                                    id="code-chat">curl http://localhost:8045/v1/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;" -d "{\"model\": \"gemini-3-flash\", \"messages\": [{\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"Hello!\"}]}"</pre>
+                                <button class="copy-btn" onclick="copyCode('code-chat', this)">Copy</button>
+                            </div>
                         </div>
                     </details>
 
@@ -1076,8 +1119,11 @@
                         <div class="content">
                             <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Retrieve a
                                 list of available models.</p>
-                            <pre class="code-block" id="code-models">curl http://localhost:8045/v1/models \
-  -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;"</pre>
+                            <div class="code-container">
+                                <pre class="code-block"
+                                    id="code-models">curl http://localhost:8045/v1/models -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;"</pre>
+                                <button class="copy-btn" onclick="copyCode('code-models', this)">Copy</button>
+                            </div>
                         </div>
                     </details>
 
@@ -1086,10 +1132,11 @@
                         <div class="content">
                             <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
                                 Programmatically create a new API key (Requires Admin Password specifically).</p>
-                            <pre class="code-block" id="code-admin-new">curl -X POST http://localhost:8045/api/admin/keys \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer &lt;ADMIN_PASSWORD&gt;" \
-  -d '{"name": "New Key from API"}'</pre>
+                            <div class="code-container">
+                                <pre class="code-block"
+                                    id="code-admin-new">curl -X POST http://localhost:8045/api/admin/keys -H "Content-Type: application/json" -H "Authorization: Bearer &lt;ADMIN_PASSWORD&gt;" -d "{\"name\": \"New Key from API\"}"</pre>
+                                <button class="copy-btn" onclick="copyCode('code-admin-new', this)">Copy</button>
+                            </div>
                         </div>
                     </details>
 
@@ -1098,17 +1145,11 @@
                         <div class="content">
                             <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
                                 Anthropic-compatible endpoint.</p>
-                            <pre class="code-block" id="code-anthropic">curl http://localhost:8045/v1/messages \
-  -H "x-api-key: &lt;YOUR_API_KEY&gt;" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "content-type: application/json" \
-  -d '{
-    "model": "claude-3-opus-20240229",
-    "max_tokens": 1024,
-    "messages": [
-        {"role": "user", "content": "Hello, world"}
-    ]
-}'</pre>
+                            <div class="code-container">
+                                <pre class="code-block"
+                                    id="code-anthropic">curl http://localhost:8045/v1/messages -H "x-api-key: &lt;YOUR_API_KEY&gt;" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" -d "{\"model\": \"claude-3-opus-20240229\", \"max_tokens\": 1024, \"messages\": [{\"role\": \"user\", \"content\": \"Hello, world\"}]}"</pre>
+                                <button class="copy-btn" onclick="copyCode('code-anthropic', this)">Copy</button>
+                            </div>
                         </div>
                     </details>
                 </div>
