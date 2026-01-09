@@ -1,5 +1,7 @@
 # Config with secrets
 settings.yaml
+usage.db
+antimatter
 
 .DS_Store
 **/.DS_Store

@@ -27,12 +27,12 @@ type SavedAccount struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-// Login starts the interactive OAuth flow
-func Login() {
+// StartLoginServer starts the local listener and returns the login URL and a wait function
+func StartLoginServer() (string, func() (*SavedAccount, error), error) {
 	// 1. Start a listener on a random port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		log.Fatalf("Failed to start local server: %v", err)
+		return "", nil, fmt.Errorf("failed to start local server: %w", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d%s", port, RedirectPath)
@@ -42,18 +42,23 @@ func Login() {
 	loginURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent",
 		AuthURL, ClientID, redirectURI, scope)
 
-	fmt.Printf("\nPlease log in from the page opened in your browser:\n%s\n\n", loginURL)
-
-	// 3. Open browser
-	openBrowser(loginURL)
-
-	// 4. Start server and wait for callback
-	server := &http.Server{}
+	// 3. Start server handler (asynchronously)
+	mux := http.NewServeMux()
+	server := &http.Server{
+		Handler: mux,
+	}
 	
-	http.HandleFunc(RedirectPath, func(w http.ResponseWriter, r *http.Request) {
+	type loginResult struct {
+		account *SavedAccount
+		err     error
+	}
+	done := make(chan loginResult, 1)
+
+	mux.HandleFunc(RedirectPath, func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			http.Error(w, "Authorization code not found", http.StatusBadRequest)
+			done <- loginResult{err: fmt.Errorf("authorization code not found")}
 			return
 		}
 
@@ -72,6 +77,7 @@ func Login() {
 		if err != nil {
 			http.Error(w, "Token exchange failed", http.StatusInternalServerError)
 			log.Printf("Token error: %v", err)
+			done <- loginResult{err: fmt.Errorf("token exchange failed: %w", err)}
 			return
 		}
 
@@ -81,6 +87,7 @@ func Login() {
 		}
 		if err := json.Unmarshal(resp.Body(), &tokenData); err != nil {
 			http.Error(w, "Failed to read token response", http.StatusInternalServerError)
+			done <- loginResult{err: fmt.Errorf("failed to read token response: %w", err)}
 			return
 		}
 
@@ -97,6 +104,7 @@ func Login() {
 		if tokenData.RefreshToken == "" {
 			log.Println("WARNING: Failed to get Refresh Token. Remove app permissions from your Google account and try again.")
 			http.Error(w, "Failed to get Refresh Token. Please reset permissions and try again.", http.StatusBadRequest)
+			done <- loginResult{err: fmt.Errorf("failed to get refresh token")}
 			return
 		}
 
@@ -104,6 +112,7 @@ func Login() {
 		if err := saveAccountToFile(userData.Email, tokenData.RefreshToken); err != nil {
 			http.Error(w, "Failed to save account", http.StatusInternalServerError)
 			log.Printf("Save error: %v", err)
+			done <- loginResult{err: fmt.Errorf("failed to save account: %w", err)}
 			return
 		}
 
@@ -120,17 +129,52 @@ func Login() {
 		`))
 		
 		log.Printf("Success! Account added: %s", userData.Email)
+		
+		// Signal success
+		acc := &SavedAccount{
+			Email:        userData.Email,
+			RefreshToken: tokenData.RefreshToken,
+		}
+		done <- loginResult{account: acc, err: nil}
 
-		// Shutdown server
+		// Shutdown server gracefully
 		go func() {
 			time.Sleep(1 * time.Second)
 			server.Shutdown(context.Background())
 		}()
 	})
 
-	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Server error: %v", err)
+	go func() {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Printf("Server error: %v", err)
+		}
+	}()
+
+	// Return a blocking function that waits for the result
+	waitFunc := func() (*SavedAccount, error) {
+		select {
+		case res := <-done:
+			return res.account, res.err
+		case <-time.After(5 * time.Minute):
+			server.Shutdown(context.Background())
+			return nil, fmt.Errorf("login timed out")
+		}
 	}
+
+	return loginURL, waitFunc, nil
+}
+
+// Login starts the interactive OAuth flow (Legacy wrapper)
+func Login() (*SavedAccount, error) {
+	url, waitFunc, err := StartLoginServer()
+	if err != nil {
+		return nil, err
+	}
+	
+	fmt.Printf("\nPlease log in from the page opened in your browser:\n%s\n\n", url)
+	openBrowser(url)
+	
+	return waitFunc()
 }
 
 func openBrowser(url string) {
