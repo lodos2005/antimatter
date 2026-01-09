@@ -21,6 +21,7 @@ import (
 
 	"antigravity-proxy-go/internal/database"
 
+	"github.com/dchest/captcha"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -568,32 +569,19 @@ func main() {
 			uiAdmin := uiRouter.Group("/api/admin")
 
 			uiAdmin.GET("/captcha", func(c *gin.Context) {
-				a := rand.Intn(9) + 1
-				b := rand.Intn(9) + 1
-				answer := strconv.Itoa(a + b)
-				id := uuid.New().String()
-
-				captchaMu.Lock()
-				captchaStore[id] = answer
-				captchaMu.Unlock()
-
-				if len(captchaStore) > 100 {
-					go func() {
-						captchaMu.Lock()
-						for k := range captchaStore {
-							delete(captchaStore, k)
-							if len(captchaStore) < 50 {
-								break
-							}
-						}
-						captchaMu.Unlock()
-					}()
-				}
-
+				// Generate new captcha with dchest/captcha
+				captchaID := captcha.NewLen(6) // 6 digits
 				c.JSON(http.StatusOK, gin.H{
-					"id":       id,
-					"question": fmt.Sprintf("%d + %d = ?", a, b),
+					"id": captchaID,
 				})
+			})
+
+			// Serve captcha image
+			uiAdmin.GET("/captcha/image/:id", func(c *gin.Context) {
+				captchaID := c.Param("id")
+				c.Header("Content-Type", "image/png")
+				c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+				captcha.WriteImage(c.Writer, captchaID, captcha.StdWidth, captcha.StdHeight)
 			})
 
 			uiAdmin.POST("/login", func(c *gin.Context) {
@@ -624,17 +612,12 @@ func main() {
 						c.JSON(http.StatusTooManyRequests, gin.H{"error": "Captcha required", "captcha_required": true})
 						return
 					}
-					captchaMu.RLock()
-					expected, exists := captchaStore[req.CaptchaId]
-					captchaMu.RUnlock()
-					if !exists || expected != req.CaptchaAnswer {
+					// Verify captcha using dchest/captcha
+					if !captcha.VerifyString(req.CaptchaId, req.CaptchaAnswer) {
 						database.IncrementFailure(ip)
 						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Captcha", "captcha_required": true})
 						return
 					}
-					captchaMu.Lock()
-					delete(captchaStore, req.CaptchaId)
-					captchaMu.Unlock()
 				}
 
 				if req.Password == cfg.Admin.Password && cfg.Admin.Enabled {

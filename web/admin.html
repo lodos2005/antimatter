@@ -474,10 +474,11 @@
                 <input type="password" id="admin-password" class="admin-login-input" placeholder="Enter password...">
 
                 <div id="captcha-group"
-                    style="display: none; margin-top: 15px; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; border: 1px solid var(--admin-border);">
-                    <p id="captcha-question" style="margin: 0 0 10px 0; font-weight: 600; color: #fff;">5 + 3 = ?</p>
-                    <input type="text" id="captcha-answer" class="admin-login-input" placeholder="Answer..."
-                        style="margin: 0; padding: 10px;">
+                    style="display: none; margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 8px;">
+                    <img id="captcha-image" src="" alt="CAPTCHA"
+                        style="width: 240px; height: 80px; margin-bottom: 10px; border-radius: 4px; display: block;">
+                    <input type="text" id="captcha-answer" class="admin-login-input"
+                        placeholder="Enter the digits shown above..." style="margin-bottom: 0;">
                     <input type="hidden" id="captcha-id">
                 </div>
             </div>

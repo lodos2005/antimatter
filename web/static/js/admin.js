@@ -71,7 +71,7 @@ async function login() {
 
             if (data.captcha_required) {
                 document.getElementById('captcha-group').style.display = 'block';
-                fetchCaptcha();
+                loadCaptcha();
                 if (data.error === "Invalid password" || data.error === "Invalid Captcha") {
                     document.getElementById('captcha-answer').value = '';
                 }
@@ -82,13 +82,13 @@ async function login() {
     }
 }
 
-async function fetchCaptcha() {
+async function loadCaptcha() {
     try {
         const res = await fetch(`${API_BASE}/api/admin/captcha`);
-        if (res.ok) {
-            const data = await res.json();
+        const data = await res.json();
+        if (data.id) {
             document.getElementById('captcha-id').value = data.id;
-            document.getElementById('captcha-question').textContent = data.question;
+            document.getElementById('captcha-image').src = `${API_BASE}/api/admin/captcha/image/${data.id}`;
         }
     } catch (e) {
         console.error("Failed to fetch captcha", e);
