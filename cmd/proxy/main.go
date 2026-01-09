@@ -113,7 +113,8 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		// But "strict" or "all_except_health" implies we WANT auth.
 		// If both strict/all_except_health are set, we MUST check auth.
 		
-		if mode == "all_except_health" && (c.Request.URL.Path == "/healthz" || c.Request.URL.Path == "/v1/models") {
+
+		if mode == "all_except_health" && c.Request.URL.Path == "/healthz" {
 			c.Next()
 			return
 		}
@@ -147,19 +148,39 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			}
 		}
 
-		// 3. Check Session Cookie (WebUI Session)
+		// 3. Check Session Cookies (WebUI or Admin)
 		if !authorized {
-			// Check for the ephemeral session ID assigned to WebUI visitors
+			// A. Check for WebUI Session (antimatter_session)
 			sessionID, err := c.Cookie("antimatter_session")
 			if err == nil && sessionID != "" {
-				// We accept the session cookie as proof of WebUI access
-				// This acts like a temporary API key for the browser session
 				c.Set("userID", "session_"+sessionID)
 				c.Set("auth_method", "session")
 				authorized = true
 			}
 			
-			// Legacy/Future: Check for signed JWT token if we implement full login later
+			// B. Check for Admin Session (admin_session) - Allows Admin Panel to access API
+			if !authorized {
+				sessionToken, err := c.Cookie("admin_session")
+				if err == nil && sessionToken != "" {
+					token, err := jwt.Parse(sessionToken, func(token *jwt.Token) (interface{}, error) {
+						if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+							return nil, fmt.Errorf("unexpected signing method")
+						}
+						key := cfg.Admin.JWTSecret
+						if key == "" { key = "default-secret-change-me" }
+						return []byte(key), nil
+					})
+					
+					if err == nil && token.Valid {
+						// Also check revocation if needed, but for now this proves admin auth
+						c.Set("userID", "admin_session")
+						c.Set("auth_method", "admin_session")
+						authorized = true
+					}
+				}
+			}
+
+			// C. Legacy JWT (antimatter_token)
 			if !authorized {
 				tokenString, err := c.Cookie("antimatter_token")
 				if err == nil && tokenString != "" {
@@ -645,6 +666,9 @@ func main() {
 		if arg == "proxyadmin" {
 			enableProxyAdmin = true
 			enableWebUI = true
+			// Force auth to be enabled in proxyadmin mode
+			cfg.Proxy.AuthMode = "all_except_health"
+			log.Println("ProxyAdmin mode: Enforcing secure authentication (all_except_health)")
 		}
 	}
 
@@ -698,6 +722,125 @@ func main() {
 	r.GET("/index.html", indexHandler)
 	r.StaticFile("/admin.html", "./web/admin.html")
 	r.GET("/", indexHandler)
+	
+	// anthropicHandler definition moved to top to support WebUI usage
+	anthropicHandler := func(c *gin.Context) {
+		var trace strings.Builder
+		if cfg.Proxy.Debug {
+			trace.WriteString(fmt.Sprintf("=== INCOMING ANTHROPIC REQUEST (%s) ===\n", time.Now().Format(time.RFC3339)))
+			trace.WriteString(fmt.Sprintf("Path: %s\n", c.Request.URL.Path))
+		}
+		defer func() {
+			if cfg.Proxy.Debug && trace.Len() > 0 {
+				writeTraceLog(&trace, "trace_anthropic")
+			}
+		}()
+
+		body, _ := io.ReadAll(c.Request.Body)
+		if cfg.Proxy.Debug {
+			trace.WriteString("\n=== REQUEST BODY ===\n")
+			trace.Write(body)
+			trace.WriteString("\n")
+		}
+
+		var req struct {
+			Stream bool   `json:"stream"`
+			Model  string `json:"model"`
+		}
+		json.Unmarshal(body, &req)
+
+		geminiReq, requestedModel, err := mappers.TransformAnthropicRequest(body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		modelCacheMu.RLock()
+		model := resolveModel(requestedModel, cfg)
+		modelCacheMu.RUnlock()
+
+		if req.Stream {
+			executeStreamWithRetry(c, tm, up, model, geminiReq, cfg, &trace, func(line string) (string, bool) {
+				// TODO: Implement proper Anthropic SSE transformer if needed.
+				// For now, let's use a simpler passthrough or similar logic.
+				// For brevity, we reuse OpenAI chunk logic but it might need adjustments for Anthropic clients.
+				return mappers.TransformOpenAIStreamChunk(line, model)
+			})
+		} else {
+			executeWithRetry(c, tm, up, model, geminiReq, cfg, &trace, func(resp []byte) interface{} {
+				out, _ := mappers.TransformAnthropicResponse(resp, model)
+				return out
+			})
+		}
+
+	}
+
+	modelsHandler := func(c *gin.Context) {
+		// Ensure we have at least one usable account before returning models
+		// This prevents the UI from thinking we are "logged in" just because it got a default list.
+		if _, err := tm.GetToken(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "No accounts available",
+			})
+			return
+		}
+
+		defaultModels := []string{
+			"gemini-2.5-pro",
+			"gemini-2.5-flash",
+			"gpt-oss-120b-medium",
+			"claude-sonnet-4-5-thinking",
+			"gemini-3-pro-low",
+			"chat_23310",
+			"rev19-uic3-1p",
+			"claude-opus-4-5-thinking",
+			"gemini-2.5-flash-lite",
+			"gemini-3-pro-image",
+			"gemini-2.5-flash-thinking",
+			"gemini-3-flash",
+			"claude-sonnet-4-5",
+			"gemini-3-pro-high",
+			"chat_20706",
+		}
+
+		modelCacheMu.RLock()
+		cached := make(map[string]bool)
+		for _, m := range modelCache {
+			cached[m] = true
+		}
+		modelCacheMu.RUnlock()
+
+		log.Printf("[DEBUG] modelsHandler called. Default models count: %d", len(defaultModels))
+
+		// Merge default models
+		for _, m := range defaultModels {
+			cached[m] = true
+		}
+
+		var finalModels []string
+		for m := range cached {
+			// Filter out internal/debug models starting with "chat_"
+			if !strings.HasPrefix(m, "chat_") {
+				finalModels = append(finalModels, m)
+			}
+		}
+		log.Printf("[DEBUG] Final models count: %d", len(finalModels))
+
+		models := []map[string]interface{}{}
+		for _, m := range finalModels {
+			models = append(models, map[string]interface{}{
+				"id":       m,
+				"object":   "model",
+				"created":  1700000000,
+				"owned_by": "google",
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"object": "list",
+			"data":   models,
+		})
+	}
+
 
 	// Optional Separate WebUI Port (8046) - kept for backward compat if needed, but redundant now
 	if enableWebUI {
@@ -725,6 +868,21 @@ func main() {
 			}
 			
 			uiRouter.StaticFile("/admin.html", "./web/admin.html")
+			
+			// Add models handler for WebUI (fix for 404 on port 8046)
+			uiRouter.GET("/v1/models", modelsHandler)
+			uiRouter.GET("/models", modelsHandler)
+			
+			// Mirror main API endpoints on WebUI port for convenience/testing (Protected by AuthMiddleware)
+			// This allows using port 8046 for API calls just like 8045
+			apiMirror := uiRouter.Group("/")
+			apiMirror.Use(AuthMiddleware(cfg))
+			{
+				apiMirror.POST("/v1/chat/completions", chatCompletionsHandler(tm, up, cfg))
+				apiMirror.POST("/chat/completions", chatCompletionsHandler(tm, up, cfg))
+				apiMirror.POST("/v1/messages", anthropicHandler)
+				apiMirror.POST("/messages", anthropicHandler)
+			}
 
 			// Login Endpoint for WebUI
 			uiRouter.POST("/api/antigravity_login", func(c *gin.Context) {
@@ -948,6 +1106,7 @@ func main() {
 					"models":   cfg.Models,
 					"admin":    gin.H{"enabled": cfg.Admin.Enabled}, // Security: Don't echo password/secret
 					"strategy": cfg.Strategy,
+					"session":  cfg.Session,
 				})
 			})
 
@@ -973,9 +1132,7 @@ func main() {
 					if auth, ok := prx["auth_mode"]; ok {
 						updates["proxy.auth_mode"] = auth
 					}
-					if lan, ok := prx["allow_lan_access"]; ok {
-						updates["proxy.allow_lan_access"] = lan
-					}
+					// Deprecated: allow_lan_access removed, ignore
 					if debug, ok := prx["debug"]; ok {
 						updates["proxy.debug"] = debug
 					}
@@ -988,6 +1145,14 @@ func main() {
 				if stg, ok := req["strategy"].(map[string]interface{}); ok {
 					if t, ok := stg["type"]; ok {
 						updates["strategy.type"] = t
+					}
+				}
+				if sess, ok := req["session"].(map[string]interface{}); ok {
+					if wrl, ok := sess["webui_request_limit"]; ok {
+						updates["session.webui_request_limit"] = wrl
+					}
+					if wtl, ok := sess["webui_token_limit"]; ok {
+						updates["session.webui_token_limit"] = wtl
 					}
 				}
 				if adm, ok := req["admin"].(map[string]interface{}); ok {
@@ -1092,118 +1257,9 @@ func main() {
 
 	// Shared Handlers
 	chatHandler := chatCompletionsHandler(tm, up, cfg)
-	anthropicHandler := func(c *gin.Context) {
-		var trace strings.Builder
-		if cfg.Proxy.Debug {
-			trace.WriteString(fmt.Sprintf("=== INCOMING ANTHROPIC REQUEST (%s) ===\n", time.Now().Format(time.RFC3339)))
-			trace.WriteString(fmt.Sprintf("Path: %s\n", c.Request.URL.Path))
-		}
-		defer func() {
-			if cfg.Proxy.Debug && trace.Len() > 0 {
-				writeTraceLog(&trace, "trace_anthropic")
-			}
-		}()
+	// anthropicHandler definition moved to top of main
+	// modelsHandler definition moved to top of main to support WebUI usage
 
-		body, _ := io.ReadAll(c.Request.Body)
-		if cfg.Proxy.Debug {
-			trace.WriteString("\n=== REQUEST BODY ===\n")
-			trace.Write(body)
-			trace.WriteString("\n")
-		}
-
-		var req struct {
-			Stream bool   `json:"stream"`
-			Model  string `json:"model"`
-		}
-		json.Unmarshal(body, &req)
-
-		geminiReq, requestedModel, err := mappers.TransformAnthropicRequest(body)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		modelCacheMu.RLock()
-		model := resolveModel(requestedModel, cfg)
-		modelCacheMu.RUnlock()
-
-		if req.Stream {
-			executeStreamWithRetry(c, tm, up, model, geminiReq, cfg, &trace, func(line string) (string, bool) {
-				// TODO: Implement proper Anthropic SSE transformer if needed.
-				// For now, let's use a simpler passthrough or similar logic.
-				// For brevity, we reuse OpenAI chunk logic but it might need adjustments for Anthropic clients.
-				return mappers.TransformOpenAIStreamChunk(line, model)
-			})
-		} else {
-			executeWithRetry(c, tm, up, model, geminiReq, cfg, &trace, func(resp []byte) interface{} {
-				out, _ := mappers.TransformAnthropicResponse(resp, model)
-				return out
-			})
-		}
-
-	}
-	modelsHandler := func(c *gin.Context) {
-		// Ensure we have at least one usable account before returning models
-		// This prevents the UI from thinking we are "logged in" just because it got a default list.
-		if _, err := tm.GetToken(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error": "No accounts available",
-			})
-			return
-		}
-
-		defaultModels := []string{
-			"gemini-2.5-pro",
-			"gemini-2.5-flash",
-			"gpt-oss-120b-medium",
-			"claude-sonnet-4-5-thinking",
-			"gemini-3-pro-low",
-			"chat_23310",
-			"rev19-uic3-1p",
-			"claude-opus-4-5-thinking",
-			"gemini-2.5-flash-lite",
-			"gemini-3-pro-image",
-			"gemini-2.5-flash-thinking",
-			"gemini-3-flash",
-			"claude-sonnet-4-5",
-			"gemini-3-pro-high",
-			"chat_20706",
-		}
-
-		modelCacheMu.RLock()
-		cached := make(map[string]bool)
-		for _, m := range modelCache {
-			cached[m] = true
-		}
-		modelCacheMu.RUnlock()
-
-		log.Printf("[DEBUG] modelsHandler called. Default models count: %d", len(defaultModels))
-
-		// Merge default models
-		for _, m := range defaultModels {
-			cached[m] = true
-		}
-
-		var finalModels []string
-		for m := range cached {
-			finalModels = append(finalModels, m)
-		}
-		log.Printf("[DEBUG] Final models count: %d", len(finalModels))
-
-		models := []map[string]interface{}{}
-		for _, m := range finalModels {
-			models = append(models, map[string]interface{}{
-				"id":       m,
-				"object":   "model",
-				"created":  1700000000,
-				"owned_by": "google",
-			})
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"object": "list",
-			"data":   models,
-		})
-	}
 	geminiHandler := func(c *gin.Context) {
 		var trace strings.Builder
 		if cfg.Proxy.Debug {
@@ -1488,10 +1544,34 @@ func main() {
 			captchaMu.Unlock()
 		}
 
+
+		// Trim input password
+		req.Password = strings.TrimSpace(req.Password)
+
 		if req.Password == cfg.Admin.Password && cfg.Admin.Enabled {
 			// Success
 			database.ResetFailure(ip)
-			c.SetCookie("admin_session", "authenticated", 3600*24, "/", "", false, true)
+			
+			// Generate JWT
+			token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+				"authorized": true,
+				"exp":        time.Now().Add(24 * time.Hour).Unix(),
+				"iat":        time.Now().Unix(),
+			})
+			
+			// Use the secret key
+			reqKey := cfg.Admin.JWTSecret
+			if reqKey == "" {
+				reqKey = "default-secret-change-me"
+			}
+			
+			tokenString, err := token.SignedString([]byte(reqKey))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate session"})
+				return
+			}
+
+			c.SetCookie("admin_session", tokenString, 3600*24, "/", "", false, true)
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		} else {
 			// Failure

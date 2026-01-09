@@ -33,6 +33,7 @@ async function checkAuth() {
         if (res.ok) {
             showDashboard();
             loadStats();
+            loadModels();
             loadRecentLogs();
         }
     } catch (e) {
@@ -157,6 +158,39 @@ async function loadStats() {
         console.error("Failed to load stats", e);
     }
 }
+
+async function loadModels() {
+    try {
+        const res = await fetch(`${API_BASE}/v1/models`);
+        if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const data = await res.json();
+
+        const container = document.getElementById('models-list-container');
+        if (data.data && Array.isArray(data.data)) {
+            container.innerHTML = data.data.map(m => `
+                <span style="
+                    background: rgba(59, 130, 246, 0.1); 
+                    color: #60a5fa; 
+                    border: 1px solid rgba(59, 130, 246, 0.2); 
+                    padding: 8px 12px; 
+                    border-radius: 8px; 
+                    font-size: 0.9em; 
+                    font-family: monospace;">
+                    ${m.id}
+                </span>
+            `).join('');
+        }
+    } catch (e) {
+        console.error("Failed to load models", e);
+        const container = document.getElementById('models-list-container');
+        if (container) {
+            container.innerHTML = `<span style="color: #fca5a5;">Failed to load models: ${e.message}</span>`;
+        }
+    }
+}
+
 
 async function loadRecentLogs() {
     try {
@@ -483,6 +517,24 @@ async function loadKeys() {
         const res = await fetch(`${API_BASE}/api/admin/keys`);
         const data = await res.json();
 
+        // Populate Generator Dropdown
+        const genSelect = document.getElementById('gen-key-select');
+        if (genSelect) {
+            // Keep default option
+            genSelect.innerHTML = '<option value="YOUR_API_KEY">Select API Key...</option>';
+            if (data.keys && data.keys.length > 0) {
+                data.keys.forEach(k => {
+                    const opt = document.createElement('option');
+                    opt.value = k.key;
+                    opt.textContent = `${k.name} (${k.key.substring(0, 8)}...)`;
+                    genSelect.appendChild(opt);
+                });
+            }
+        }
+
+        await populateModelDropdown(); // Load models from API
+        updateCurlExamples(); // Update examples
+
         if (!data.keys || data.keys.length === 0) {
             list.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No API Keys found (Config keys are not listed here).</p>';
             return;
@@ -515,6 +567,48 @@ async function loadKeys() {
     } catch (e) {
         console.error(e);
         list.innerHTML = `<p style="color: #f87171;">Error loading keys: ${e.message}</p>`;
+    }
+}
+
+function updateCurlExamples() {
+    const key = document.getElementById('gen-key-select').value;
+    const model = document.getElementById('gen-model-select').value;
+    const chatEl = document.getElementById('code-chat');
+    const modelsEl = document.getElementById('code-models');
+    const anthropicEl = document.getElementById('code-anthropic');
+
+    if (chatEl) {
+        chatEl.textContent = `curl ${API_BASE}/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${key}" \\
+  -d '{
+    "model": "${model}",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'`;
+    }
+
+    if (modelsEl) {
+        modelsEl.textContent = `curl ${API_BASE}/v1/models \\
+  -H "Authorization: Bearer ${key}"`;
+    }
+
+    if (anthropicEl) {
+        // Map model to something anthropic-like if desired, or keep generic
+        // but user selected generic models. 
+        anthropicEl.textContent = `curl ${API_BASE}/v1/messages \\
+  -H "x-api-key: ${key}" \\
+  -H "anthropic-version: 2023-06-01" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "${model}", 
+    "max_tokens": 1024,
+    "messages": [
+        {"role": "user", "content": "Hello, world"}
+    ]
+}'`;
     }
 }
 
@@ -563,3 +657,37 @@ async function deleteKey(key) {
         alert("Network error");
     }
 }
+
+async function populateModelDropdown() {
+    try {
+        const res = await fetch(`${API_BASE}/v1/models`);
+        const data = await res.json();
+        const select = document.getElementById('gen-model-select');
+
+        if (select && data.data && Array.isArray(data.data)) {
+            // Store current selection if any
+            const currentVal = select.value;
+            select.innerHTML = '';
+
+            data.data.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.id;
+                select.appendChild(opt);
+            });
+
+            // Try to restore selection or default to gemini-3-flash
+            if (currentVal && data.data.some(m => m.id === currentVal)) {
+                select.value = currentVal;
+            } else if (data.data.some(m => m.id === 'gemini-3-flash')) {
+                select.value = 'gemini-3-flash';
+            }
+
+            // Trigger update
+            updateCurlExamples();
+        }
+    } catch (e) {
+        console.error("Failed to populate gen-model-select", e);
+    }
+}
+

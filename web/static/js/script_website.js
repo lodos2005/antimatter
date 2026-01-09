@@ -521,7 +521,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                                 // Capture current open state if existing
                                 const existingDetails = aiMessageContentDiv.querySelector('.reasoning-details');
-                                const isOpen = existingDetails ? existingDetails.hasAttribute('open') : false;
+                                const wasManuallyToggled = existingDetails ? existingDetails.hasAttribute('data-manually-toggled') : false;
+                                const isOpen = existingDetails ? existingDetails.hasAttribute('open') : (!fullContent && fullReasoning);
 
                                 let finalHtml = '';
 
@@ -529,10 +530,12 @@ document.addEventListener('DOMContentLoaded', () => {
                                 if (fullReasoning.trim()) {
                                     let rText = fullReasoning;
                                     let rHtml = marked.parse(rText);
-                                    // Re-apply open attribute if it was open
+                                    // Auto-open if only reasoning exists (no content yet), or if previously toggled
                                     const openAttr = isOpen ? 'open' : '';
+                                    const manualToggleAttr = wasManuallyToggled ? 'data-manually-toggled="true"' : '';
                                     finalHtml += `
-                                                <details class="reasoning-container reasoning-details" ${openAttr}>
+                                                <details class="reasoning-container reasoning-details" ${openAttr} ${manualToggleAttr}
+                                                    ontoggle="this.setAttribute('data-manually-toggled', 'true');">
                                                     <summary class="reasoning-summary">
                                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                                             <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-2h2zm0-4h-2V7h2z"/>
@@ -541,7 +544,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                                     </summary>
                                                     <div class="reasoning-content">
                                                         ${rHtml}
-                                                        <button class="reasoning-hide-btn" onclick="this.closest('details').removeAttribute('open')">
+                                                        <button class="reasoning-hide-btn" onclick="this.closest('details').removeAttribute('open'); this.closest('details').setAttribute('data-manually-toggled', 'true');">
                                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                                                 <polyline points="18 15 12 9 6 15"></polyline>
                                                             </svg>
@@ -555,8 +558,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                 if (fullContent) {
                                     finalHtml += marked.parse(fullContent);
                                 } else if (fullReasoning && !fullContent) {
-                                    // If only reasoning so far, show thinking indicator below it
-                                    finalHtml += '<div class="thinking-indicator">Thinking...</div>';
+                                    // If only reasoning so far, show a subtle indicator that we're waiting for the response
+                                    finalHtml += '<div class="thinking-indicator" style="opacity: 0.5; font-size: 0.9em;">💭 Formulating response...</div>';
                                 }
 
                                 aiMessageContentDiv.innerHTML = finalHtml;

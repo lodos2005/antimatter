@@ -3,6 +3,7 @@ package mappers
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type OpenAIMessage struct {
@@ -22,11 +23,21 @@ func TransformOpenAIRequest(body []byte) (map[string]interface{}, string, error)
 	}
 
 	contents := []map[string]interface{}{}
+	var systemParts []map[string]interface{}
+
 	for _, msg := range req.Messages {
+		if msg.Role == "system" {
+			systemParts = append(systemParts, map[string]interface{}{
+				"text": msg.Content,
+			})
+			continue
+		}
+
 		role := msg.Role
 		if role == "assistant" {
 			role = "model"
 		}
+		
 		contents = append(contents, map[string]interface{}{
 			"role": role,
 			"parts": []map[string]interface{}{
@@ -43,16 +54,22 @@ func TransformOpenAIRequest(body []byte) (map[string]interface{}, string, error)
 		},
 	}
 
-	// Inject thinkingConfig if model name suggests thinking
-	// Expanded to include gemini-3-pro based on trace logs showing thoughtsTokenCount
-	genConfig, _ := geminiReq["generationConfig"].(map[string]interface{})
-	genConfig["thinkingConfig"] = map[string]interface{}{
-		"includeThoughts": true,
-		"thinkingBudget":  16000,
+	if len(systemParts) > 0 {
+		geminiReq["system_instruction"] = map[string]interface{}{
+			"parts": systemParts,
+		}
 	}
-	// Ensure maxOutputTokens is greater than thinkingBudget (16000)
-	// 64000 is a safe default for thinking models
-	genConfig["maxOutputTokens"] = 64000
+
+	// Inject thinkingConfig ONLY if model name suggests thinking
+	if strings.Contains(req.Model, "thinking") {
+		genConfig, _ := geminiReq["generationConfig"].(map[string]interface{})
+		genConfig["thinkingConfig"] = map[string]interface{}{
+			"includeThoughts": true,
+			"thinkingBudget":  16000,
+		}
+		// Ensure maxOutputTokens is greater than thinkingBudget (16000)
+		genConfig["maxOutputTokens"] = 64000
+	}
 
 	return geminiReq, req.Model, nil
 }

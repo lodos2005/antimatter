@@ -158,7 +158,7 @@ func GetRecentLogs(limit int) ([]RequestLog, error) {
 
 // Pagination & List
 func GetSessions(page, limit int, modelFilter, ipFilter string) ([]RequestLog, int, error) {
-	whereClause := "WHERE session_id IS NOT NULL AND session_id != ''"
+	whereClause := "WHERE 1=1" // Start with a neutral condition
 	args := []interface{}{}
 
 	if modelFilter != "" {
@@ -170,7 +170,7 @@ func GetSessions(page, limit int, modelFilter, ipFilter string) ([]RequestLog, i
 		args = append(args, ipFilter)
 	}
 
-	// Get Total Count of distinct sessions
+	// Get Total Count of distinct sessions (including non-session requests grouped by ID)
 	var total int
 	countQuery := "SELECT COUNT(DISTINCT COALESCE(NULLIF(session_id, ''), 'unknown-' || CAST(id AS TEXT))) FROM request_logs " + whereClause
 	err := DB.QueryRow(countQuery, args...).Scan(&total)

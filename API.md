@@ -16,7 +16,8 @@ Authentication behavior depends on the `auth_mode` setting in `settings.yaml`.
 
 - **Monitoring**: No auth required (default/public mode).
 - **Strict**: Requires an API Key for all endpoints (except health).
-- **All Except Health**: Requires an API Key for all endpoints except `/health` and `/v1/models`.
+- **All Except Health**: Requires an API Key for all endpoints except `/health` and `/static/*`. (Enforced in `proxyadmin` mode).
+- **Auto**: Uses `all_except_health` if exposed to usage (0.0.0.0), otherwise `off` for local only.
 
 ### Methods
 You can provide the API key in one of two ways:
@@ -39,6 +40,7 @@ Generate text or chat responses using Gemini models via an OpenAI-compatible int
 
 - **Endpoint**: `POST /v1/chat/completions`
 - **Content-Type**: `application/json`
+- **Auth**: Required (unless mode is `off`). WebUI sessions require `X-CSRF-Token` header.
 
 **Request Body:**
 ```json
@@ -89,6 +91,7 @@ Server-Sent Events (SSE) stream, compatible with OpenAI clients.
 Retrieve available models from the upstream provider.
 
 - **Endpoint**: `GET /v1/models`
+- **Auth**: Required in `strict` and `all_except_health` modes. (Accessible with Admin Session).
 
 #### Example Request
 
@@ -124,7 +127,6 @@ Check if the proxy is running.
 ```bash
 curl http://localhost:8045/health
 ```
-```
 
 ---
 
@@ -137,7 +139,7 @@ curl http://localhost:8045/health
 The Admin API supports two authentication methods:
 
 1. **Bearer Token (Recommended for Scripts)**: Use your `admin.password` from `settings.yaml` as the Bearer token. **No CSRF token is required** when using this method.
-2. **Browser Session**: Used by the Web UI. Relies on `admin_session` cookie and requires `X-CSRF-Token` header for state-changing requests.
+2. **Browser Session**: Used by the Web UI. Relies on `admin_session` cookie (JWT) and requires `X-CSRF-Token` header for state-changing requests.
 
 #### 1. Login (Browser Session Only)
 (Only needed if you are NOT using the Bearer token method)
@@ -149,6 +151,12 @@ The Admin API supports two authentication methods:
 curl -c cookies.txt -X POST http://localhost:8045/api/admin/login \
   -H "Content-Type: application/json" \
   -d '{ "password": "your-admin-password" }'
+```
+
+**Response:**
+Sets `admin_session` cookie (JWT).
+```json
+{ "status": "ok" }
 ```
 
 #### 2. Logout (Browser Session Only)
@@ -225,7 +233,8 @@ curl -X POST http://localhost:8045/api/admin/config \
   -H "Authorization: Bearer your-admin-password" \
   -d '{
     "server": { "port": 8045 },
-    "proxy": { "debug": true }
+    "proxy": { "debug": true },
+    "session": { "webui_request_limit": 50, "webui_token_limit": 50000 }
   }'
 ```
 
