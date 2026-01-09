@@ -740,6 +740,52 @@ func main() {
 		}
 	}()
 
+	// Config File Watcher (Hot Reload)
+	go func() {
+		lastModTime := time.Time{}
+		if info, err := os.Stat("settings.yaml"); err == nil {
+			lastModTime = info.ModTime()
+		}
+
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			info, err := os.Stat("settings.yaml")
+			if err != nil {
+				continue
+			}
+			// precise check
+			if !info.ModTime().Equal(lastModTime) {
+				lastModTime = info.ModTime()
+
+				log.Println("Detected change in settings.yaml, reloading...")
+				newCfg, err := config.LoadConfig("settings.yaml")
+				if err != nil {
+					log.Printf("Failed to reload settings: %v", err)
+					continue
+				}
+
+				// Update config fields
+				// Note: In a high-concurrency partial-read scenario this needs a mutex,
+				// but for this app swapping pointers is acceptable for now.
+				cfg.Server = newCfg.Server
+				cfg.Proxy = newCfg.Proxy
+				cfg.Models = newCfg.Models
+				cfg.MCP = newCfg.MCP
+				cfg.Session = newCfg.Session
+				cfg.Admin = newCfg.Admin
+				cfg.Strategy = newCfg.Strategy
+				cfg.Accounts = newCfg.Accounts
+
+				// Update dependent services
+				tm.UpdateAccounts(cfg.Accounts)
+
+				log.Println("Configuration reloaded from settings.yaml")
+			}
+		}
+	}()
+
 	r := gin.Default()
 	r.Use(CORSMiddleware())
 	r.Use(AuthMiddleware(cfg))
@@ -946,10 +992,28 @@ func main() {
 						log.Printf("WebUI Login wait error: %v", err)
 						return
 					}
-					// Add the new account to the TokenManager
+					// Add the new account to settings.yaml and TokenManager
 					if acc != nil {
-						tm.AddAccount(acc.Email, acc.RefreshToken, false, 0, "")
-						log.Printf("Account %s added to TokenManager via WebUI", acc.Email)
+						// 1. Save to file
+						if err := config.AddOrUpdateAccount("settings.yaml", acc.Email, acc.RefreshToken); err != nil {
+							log.Printf("Failed to save account to settings.yaml: %v", err)
+						} else {
+							log.Printf("Account %s saved to settings.yaml", acc.Email)
+						}
+
+						// 2. Update memory immediately (for UI polling)
+						// Reload to get full struct or just append?
+						// Reload is safer to ensure sync.
+						newCfg, err := config.LoadConfig("settings.yaml")
+						if err == nil {
+							cfg.Accounts = newCfg.Accounts
+							tm.UpdateAccounts(cfg.Accounts)
+							log.Println("Configuration reloaded after WebUI login")
+						} else {
+							// Fallback: Add to TokenManager manually if reload fails
+							tm.AddAccount(acc.Email, acc.RefreshToken, false, 0, "")
+							log.Printf("Account %s added to TokenManager (memory only) via WebUI", acc.Email)
+						}
 					}
 				}()
 

@@ -804,7 +804,7 @@ async function loadAccounts() {
 
     try {
         console.log('Fetching accounts from:', `${API_BASE}/api/admin/accounts`);
-        const res = await fetch(`${API_BASE}/api/admin/accounts`);
+        const res = await fetch(`${API_BASE}/api/admin/accounts`, { cache: 'no-store' });
 
         if (!res.ok) {
             throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -913,7 +913,22 @@ async function deleteAccount(email) {
 }
 
 async function loginWithGoogle() {
+    const btn = document.getElementById('btn-google-login');
+    const originalContent = btn.innerHTML;
+
     try {
+        // Set loading state
+        btn.innerHTML = `
+            <svg class="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 6v6l4 2"></path>
+            </svg>
+            <span>Waiting for Login...</span>
+        `;
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+        btn.style.cursor = 'not-allowed';
+
         // Get current account count before login
         let initialCount = 0;
         try {
@@ -942,18 +957,28 @@ async function loginWithGoogle() {
             const popup = window.open(data.url, 'Google Sign In', `width=${width},height=${height},left=${left},top=${top}`);
 
             let attempts = 0;
+            let checksAfterClose = 0;
+
             const checkInterval = setInterval(async () => {
                 attempts++;
 
-                // Check if popup was closed without completing login
+                // If popup is closed, allow a few more checks (grace period)
                 if (popup && popup.closed) {
-                    clearInterval(checkInterval);
-                    console.log('Login popup closed by user');
-                    return;
+                    checksAfterClose++;
+                    if (checksAfterClose > 5) {
+                        clearInterval(checkInterval);
+                        console.log('Login popup closed by user/completed');
+                        // Restore button
+                        btn.innerHTML = originalContent;
+                        btn.disabled = false;
+                        btn.style.opacity = '1';
+                        btn.style.cursor = 'pointer';
+                        return;
+                    }
                 }
 
                 try {
-                    const accountsRes = await fetch(`${API_BASE}/api/admin/accounts`);
+                    const accountsRes = await fetch(`${API_BASE}/api/admin/accounts`, { cache: 'no-store' });
                     if (accountsRes.ok) {
                         const accountsData = await accountsRes.json();
                         const currentCount = accountsData.accounts ? accountsData.accounts.length : 0;
@@ -965,6 +990,12 @@ async function loginWithGoogle() {
                             document.getElementById('add-account-modal').close();
                             loadAccounts();
                             alert('Account added successfully!');
+
+                            // Restore button (though modal closes, good practice)
+                            btn.innerHTML = originalContent;
+                            btn.disabled = false;
+                            btn.style.opacity = '1';
+                            btn.style.cursor = 'pointer';
                         }
                     }
                 } catch (e) {
@@ -974,14 +1005,27 @@ async function loginWithGoogle() {
                 if (attempts >= 120) { // 2 minute timeout
                     clearInterval(checkInterval);
                     alert('Login timeout. Please try again.');
+                    // Restore button
+                    btn.innerHTML = originalContent;
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    btn.style.cursor = 'pointer';
                 }
             }, 1000);
         }
     } catch (e) {
-        console.error('Error starting Google login:', e);
-        alert('Failed to start Google login: ' + e.message);
+        console.error(e);
+        alert("Login failed: " + e.message);
+        // Restore button
+        if (btn) {
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+        }
     }
 }
+
 
 // Clipboard Helper
 async function copyCode(elementId, btn) {

@@ -95,6 +95,11 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.Session.WebUITokenLimit = -cfg.Session.WebUITokenLimit
 	}
 
+	// Default System Prompt
+	if cfg.Models.SystemPrompt == "" {
+		cfg.Models.SystemPrompt = "You are research assistant"
+	}
+
 	return &cfg, nil
 }
 
