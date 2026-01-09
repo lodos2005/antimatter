@@ -32,12 +32,17 @@ type ProxyConfig struct {
 
 type ModelsConfig struct {
 	FallbackModel string `yaml:"fallback_model" json:"fallback_model"`
+	SystemPrompt  string `yaml:"system_prompt" json:"system_prompt"`
 }
 
 type AdminConfig struct {
 	Enabled   bool   `yaml:"enabled" json:"enabled"`
-	Password  string `yaml:"password" json:"password"`
+	Password  string `yaml:"password" json:"password"` // Encrypted or plain?
 	JWTSecret string `yaml:"jwt_secret" json:"jwt_secret"`
+}
+
+type MCPConfig struct {
+	Mode string `yaml:"mode" json:"mode"` // "off", "server", "provider"
 }
 
 type Config struct {
@@ -45,6 +50,7 @@ type Config struct {
 	Proxy    ProxyConfig     `yaml:"proxy" json:"proxy"`
 	Models   ModelsConfig    `yaml:"models" json:"models"`
 	Admin    AdminConfig     `yaml:"admin" json:"admin"`
+	MCP      MCPConfig       `yaml:"mcp" json:"mcp"`
 	Strategy StrategyConfig  `yaml:"strategy" json:"strategy"`
 	Session  SessionConfig   `yaml:"session" json:"session"`
 	Accounts []AccountConfig `yaml:"accounts" json:"accounts"`

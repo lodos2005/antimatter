@@ -316,7 +316,22 @@ function renderLogs(logs) {
     if (!logs || logs.length === 0) return '';
     const sorted = [...logs].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    return sorted.map(log => `
+    return sorted.map(log => {
+        let thoughtHtml = '';
+        if (log.thought) {
+            thoughtHtml = `
+                <details class="thought-process" style="margin-bottom: 10px; border: 1px solid rgba(147, 51, 234, 0.3); border-radius: 8px; background: rgba(147, 51, 234, 0.05);">
+                    <summary style="padding: 8px 12px; cursor: pointer; color: #d8b4fe; font-size: 0.9em; font-weight: 500;">
+                        <span>Thinking Process</span>
+                    </summary>
+                    <div class="markdown-body" style="padding: 10px 12px; border-top: 1px solid rgba(147, 51, 234, 0.15); color: #ccc; font-size: 0.9em;">
+                        ${marked.parse(log.thought)}
+                    </div>
+                </details>
+            `;
+        }
+
+        return `
         <div class="chat-pair">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05);">
                 <span class="status-badge status-200" style="font-size: 0.75em;">${log.model || 'unknown'}</span>
@@ -330,12 +345,15 @@ function renderLogs(logs) {
             </div>
             <div class="message-row">
                 <div class="role-label role-model">Model</div>
-                <div class="message-content markdown-body" style="background: rgba(255, 255, 255, 0.03); padding: 12px; border-radius: 8px; font-size: 0.95em; line-height: 1.5; color: #eee;">
-                    ${marked.parse(log.response || '(No response captured)')}
+                <div class="message-content" style="width: 100%;">
+                    ${thoughtHtml}
+                    <div class="markdown-body" style="background: rgba(255, 255, 255, 0.03); padding: 12px; border-radius: 8px; font-size: 0.95em; line-height: 1.5; color: #eee;">
+                        ${marked.parse(log.response || '(No response captured)')}
+                    </div>
                 </div>
             </div>
         </div>
-    `).join('');
+    `}).join('');
 }
 
 async function toggleSession(sid, header) {
@@ -439,11 +457,16 @@ async function loadSettings() {
 
         document.getElementById('set-auth-mode').value = cfg.proxy.auth_mode;
         document.getElementById('set-fallback-model').value = cfg.models.fallback_model;
+        document.getElementById('set-system-prompt').value = cfg.models.system_prompt || ''; // Load prompt
+
         document.getElementById('set-strategy').value = cfg.strategy.type;
         document.getElementById('set-session-limit').value = (cfg.session && cfg.session.webui_request_limit) ? cfg.session.webui_request_limit : 0;
         document.getElementById('set-token-limit').value = (cfg.session && cfg.session.webui_token_limit) ? cfg.session.webui_token_limit : 0;
 
         document.getElementById('set-debug').checked = cfg.proxy.debug;
+
+        // MCP Mode
+        document.getElementById('set-mcp-mode').value = (cfg.mcp && cfg.mcp.mode) ? cfg.mcp.mode : 'off';
 
         document.getElementById('set-admin-enabled').checked = cfg.admin.enabled;
         document.getElementById('set-admin-pass').value = ""; // Don't show current password
@@ -467,7 +490,8 @@ async function saveSettings() {
             debug: document.getElementById('set-debug').checked
         },
         models: {
-            fallback_model: document.getElementById('set-fallback-model').value
+            fallback_model: document.getElementById('set-fallback-model').value,
+            system_prompt: document.getElementById('set-system-prompt').value // Save prompt
         },
         strategy: {
             type: document.getElementById('set-strategy').value
@@ -479,6 +503,9 @@ async function saveSettings() {
         admin: {
             enabled: document.getElementById('set-admin-enabled').checked,
             password: document.getElementById('set-admin-pass').value
+        },
+        mcp: {
+            mode: document.getElementById('set-mcp-mode').value
         }
     };
 

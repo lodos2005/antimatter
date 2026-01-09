@@ -780,6 +780,14 @@
                                     <input type="text" id="set-fallback-model" class="admin-login-input"
                                         style="margin: 0; padding: 10px;">
                                 </div>
+                                <div style="grid-column: span 2;">
+                                    <label
+                                        style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Global
+                                        System Prompt</label>
+                                    <textarea id="set-system-prompt" class="admin-login-input"
+                                        style="width: 100%; margin: 0; padding: 10px; min-height: 80px; resize: vertical;"
+                                        placeholder="Optional: Enter a system instruction to apply to all requests..."></textarea>
+                                </div>
                                 <div>
                                     <label
                                         style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Strategy</label>
@@ -810,6 +818,31 @@
                                     <input type="checkbox" id="set-debug">
                                     <span style="color: #ddd;">Debug Mode</span>
                                 </label>
+                            </div>
+                        </div>
+
+                        <!-- MCP Configuration -->
+                        <div class="settings-group"
+                            style="margin-bottom: 30px; background: var(--admin-card-bg); padding: 24px; border-radius: 12px; border: 1px solid var(--admin-border);">
+                            <h3
+                                style="margin-top: 0; margin-bottom: 15px; font-size: 1.1em; color: #fff; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px;">
+                                MCP Configuration</h3>
+
+                            <div style="margin-bottom: 15px;">
+                                <label style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">MCP
+                                    Mode</label>
+                                <select id="set-mcp-mode" class="admin-login-input"
+                                    style="width: 100%; margin: 0; padding: 10px;">
+                                    <option value="off">Off (Disabled)</option>
+                                    <option value="server">MCP Server (Tools for AI)</option>
+                                    <option value="provider">LLM Provider (Compatible API)</option>
+                                </select>
+                                <p style="margin-top: 8px; color: #666; font-size: 0.85em;">
+                                    <strong>Server:</strong> Exposes tools like creating keys and reading logs to an AI
+                                    agent (via stdio).<br>
+                                    <strong>Provider:</strong> Acts as an OpenAI-compatible backend for tools like
+                                    Claude Desktop.
+                                </p>
                             </div>
                         </div>
 

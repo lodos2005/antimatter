@@ -3,7 +3,9 @@ package main
 import (
 	"antigravity-proxy-go/internal/auth"
 	"antigravity-proxy-go/internal/config"
+	"antigravity-proxy-go/internal/database"
 	"antigravity-proxy-go/internal/mappers"
+	"antigravity-proxy-go/internal/mcp"
 	"antigravity-proxy-go/internal/upstream"
 	"bufio"
 	"context"
@@ -21,12 +23,11 @@ import (
 	"sync"
 	"time"
 
-	"antigravity-proxy-go/internal/database"
-
 	"github.com/dchest/captcha"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 var (
@@ -376,6 +377,28 @@ func chatCompletionsHandler(tm *auth.TokenManager, up *upstream.Client, cfg *con
 			return
 		}
 
+		// Inject Global System Prompt if configured
+		if cfg.Models.SystemPrompt != "" {
+			newPart := map[string]interface{}{
+				"text": cfg.Models.SystemPrompt,
+			}
+
+			if sysInst, ok := geminiReq["system_instruction"].(map[string]interface{}); ok {
+				if parts, ok := sysInst["parts"].([]map[string]interface{}); ok {
+					// Prepend global prompt
+					geminiReq["system_instruction"].(map[string]interface{})["parts"] = append([]map[string]interface{}{newPart}, parts...)
+				} else {
+					// Malformed parts, reset
+					sysInst["parts"] = []map[string]interface{}{newPart}
+				}
+			} else {
+				// No existing system instruction, create one
+				geminiReq["system_instruction"] = map[string]interface{}{
+					"parts": []map[string]interface{}{newPart},
+				}
+			}
+		}
+
 		modelCacheMu.RLock()
 		model := resolveModel(requestedModel, cfg)
 		modelCacheMu.RUnlock()
@@ -539,11 +562,16 @@ func chatCompletionsHandler(tm *auth.TokenManager, up *upstream.Client, cfg *con
 				// Extract full response based on simple JSON structure assumption for now
 				// (Assuming 'out' is the final JSON response)
 				var responseText string
+				var thoughtText string
+
 				if choices, ok := out["choices"].([]interface{}); ok && len(choices) > 0 {
 					if choice, ok := choices[0].(map[string]interface{}); ok {
 						if msg, ok := choice["message"].(map[string]interface{}); ok {
 							if content, ok := msg["content"].(string); ok {
 								responseText = content
+							}
+							if thought, ok := msg["thought"].(string); ok {
+								thoughtText = thought
 							}
 						}
 					}
@@ -555,6 +583,7 @@ func chatCompletionsHandler(tm *auth.TokenManager, up *upstream.Client, cfg *con
 					UserID:           userID,
 					SessionID:        sessionID,
 					Response:         responseText,
+					Thought:          thoughtText,
 					PromptTokens:     usage.PromptTokens,
 					CompletionTokens: usage.CompletionTokens,
 					TotalTokens:      usage.TotalTokens,
@@ -654,6 +683,18 @@ func main() {
 			runStatus()
 			return
 		}
+		if os.Args[1] == "mcp" {
+			// Ensure DB is init
+			if err := database.InitDB("usage.db"); err != nil {
+				log.Fatalf("Failed to initialize database: %v", err)
+			}
+			srv := mcp.CreateMCPServer()
+			log.Println("Starting MCP Server (Stdio)...")
+			if err := mcpserver.ServeStdio(srv); err != nil {
+				log.Fatalf("MCP Server Error: %v", err)
+			}
+			return
+		}
 	}
 
 	// Check for flags
@@ -670,6 +711,11 @@ func main() {
 			cfg.Proxy.AuthMode = "all_except_health"
 			log.Println("ProxyAdmin mode: Enforcing secure authentication (all_except_health)")
 		}
+	}
+
+	// Log MCP info if enabled
+	if cfg.MCP.Mode == "server" {
+		log.Println("FYI: MCP Server Mode is configured. To use it, configure your AI Client to run 'antimatter.exe mcp'.")
 	}
 
 	tm := auth.NewTokenManager(cfg.Strategy.Type)
@@ -1103,6 +1149,7 @@ func main() {
 					"server":   cfg.Server,
 					"proxy":    cfg.Proxy,
 					"models":   cfg.Models,
+					"mcp":      cfg.MCP,
 					"admin":    gin.H{"enabled": cfg.Admin.Enabled}, // Security: Don't echo password/secret
 					"strategy": cfg.Strategy,
 					"session":  cfg.Session,
@@ -1142,6 +1189,14 @@ func main() {
 				if mdl, ok := req["models"].(map[string]interface{}); ok {
 					if fb, ok := mdl["fallback_model"]; ok {
 						updates["models.fallback_model"] = fb
+					}
+					if sp, ok := mdl["system_prompt"]; ok {
+						updates["models.system_prompt"] = sp
+					}
+				}
+				if mcpMap, ok := req["mcp"].(map[string]interface{}); ok {
+					if mode, ok := mcpMap["mode"]; ok {
+						updates["mcp.mode"] = mode
 					}
 				}
 				if stg, ok := req["strategy"].(map[string]interface{}); ok {

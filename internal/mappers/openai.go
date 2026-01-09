@@ -37,7 +37,7 @@ func TransformOpenAIRequest(body []byte) (map[string]interface{}, string, error)
 		if role == "assistant" {
 			role = "model"
 		}
-		
+
 		contents = append(contents, map[string]interface{}{
 			"role": role,
 			"parts": []map[string]interface{}{
@@ -94,13 +94,29 @@ func TransformOpenAIResponse(upstreamBody []byte, model string) (map[string]inte
 
 	candidates, _ := inner["candidates"].([]interface{})
 	contentStr := ""
+	thoughtStr := ""
+
 	if len(candidates) > 0 {
 		cand := candidates[0].(map[string]interface{})
 		content, _ := cand["content"].(map[string]interface{})
 		parts, _ := content["parts"].([]interface{})
-		if len(parts) > 0 {
-			part := parts[0].(map[string]interface{})
-			contentStr, _ = part["text"].(string)
+
+		for _, p := range parts {
+			if part, ok := p.(map[string]interface{}); ok {
+				text, _ := part["text"].(string)
+				// Check for thought marker (this depends on Gemini API specifics, usually defined by 'thought': true or similar)
+				// For 'includeThoughts=true', it often returns a part with thought: true
+				isThought := false
+				if t, ok := part["thought"].(bool); ok && t {
+					isThought = true
+				}
+
+				if isThought {
+					thoughtStr += text + "\n"
+				} else {
+					contentStr += text
+				}
+			}
 		}
 	}
 
@@ -122,6 +138,14 @@ func TransformOpenAIResponse(upstreamBody []byte, model string) (map[string]inte
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 
+	message := map[string]interface{}{
+		"role":    "assistant",
+		"content": contentStr,
+	}
+	if thoughtStr != "" {
+		message["thought"] = strings.TrimSpace(thoughtStr)
+	}
+
 	openaiResp := map[string]interface{}{
 		"id":      fmt.Sprintf("chatcmpl-%d", 12345), // Should be more unique
 		"object":  "chat.completion",
@@ -129,11 +153,8 @@ func TransformOpenAIResponse(upstreamBody []byte, model string) (map[string]inte
 		"model":   model,
 		"choices": []map[string]interface{}{
 			{
-				"index": 0,
-				"message": map[string]interface{}{
-					"role":    "assistant",
-					"content": contentStr,
-				},
+				"index":         0,
+				"message":       message,
 				"finish_reason": "stop",
 			},
 		},

@@ -95,6 +95,10 @@ func createTables() error {
 		// New migration for API Key expiration
 		migrationKeys := "ALTER TABLE api_keys ADD COLUMN expires_at DATETIME;"
 		DB.Exec(migrationKeys)
+
+		// Migration: Add thought column for reasoning models
+		migrationThought := "ALTER TABLE request_logs ADD COLUMN thought TEXT;"
+		DB.Exec(migrationThought)
 	}
 
 	return err
@@ -112,21 +116,22 @@ type RequestLog struct {
 	LatencyMS        int64     `json:"latency_ms"`
 	Prompt           string    `json:"prompt"`
 	Response         string    `json:"response"`
+	Thought          string    `json:"thought"`
 	SessionID        string    `json:"session_id"`
 }
 
 func LogRequest(ctx context.Context, l *RequestLog) error {
 	query := `
-		INSERT INTO request_logs (timestamp, model, user_id, prompt_tokens, completion_tokens, total_tokens, status, latency_ms, prompt, response, session_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO request_logs (timestamp, model, user_id, prompt_tokens, completion_tokens, total_tokens, status, latency_ms, prompt, response, thought, session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := DB.ExecContext(ctx, query, time.Now(), l.Model, l.UserID, l.PromptTokens, l.CompletionTokens, l.TotalTokens, l.Status, l.LatencyMS, l.Prompt, l.Response, l.SessionID)
+	_, err := DB.ExecContext(ctx, query, time.Now(), l.Model, l.UserID, l.PromptTokens, l.CompletionTokens, l.TotalTokens, l.Status, l.LatencyMS, l.Prompt, l.Response, l.Thought, l.SessionID)
 	return err
 }
 
 func GetRecentLogs(limit int) ([]RequestLog, error) {
 	query := `
-		SELECT id, timestamp, model, user_id, prompt_tokens, completion_tokens, total_tokens, status, latency_ms, prompt, response, session_id
+		SELECT id, timestamp, model, user_id, prompt_tokens, completion_tokens, total_tokens, status, latency_ms, prompt, response, thought, session_id
 		FROM request_logs
 		ORDER BY timestamp DESC
 		LIMIT ?
@@ -141,9 +146,9 @@ func GetRecentLogs(limit int) ([]RequestLog, error) {
 	for rows.Next() {
 		var l RequestLog
 		// Handling possible NULL for prompt if rows were created before migration
-		var prompt, response, sessionID sql.NullString
+		var prompt, response, thought, sessionID sql.NullString
 
-		if err := rows.Scan(&l.ID, &l.Timestamp, &l.Model, &l.UserID, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.Status, &l.LatencyMS, &prompt, &response, &sessionID); err != nil {
+		if err := rows.Scan(&l.ID, &l.Timestamp, &l.Model, &l.UserID, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.Status, &l.LatencyMS, &prompt, &response, &thought, &sessionID); err != nil {
 			return nil, err
 		}
 		if prompt.Valid {
@@ -151,6 +156,9 @@ func GetRecentLogs(limit int) ([]RequestLog, error) {
 		}
 		if response.Valid {
 			l.Response = response.String
+		}
+		if thought.Valid {
+			l.Thought = thought.String
 		}
 		if sessionID.Valid {
 			l.SessionID = sessionID.String
