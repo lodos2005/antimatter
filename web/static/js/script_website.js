@@ -371,6 +371,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: {
                     'Content-Type': 'application/json'
                 },
+                credentials: 'include', // Send cookies with request
                 body: JSON.stringify({
                     model: selectedModel,
                     messages: [

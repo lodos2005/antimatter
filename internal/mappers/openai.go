@@ -57,10 +57,16 @@ func TransformOpenAIRequest(body []byte) (map[string]interface{}, string, error)
 	return geminiReq, req.Model, nil
 }
 
-func TransformOpenAIResponse(upstreamBody []byte, model string) (map[string]interface{}, error) {
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+func TransformOpenAIResponse(upstreamBody []byte, model string) (map[string]interface{}, Usage, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(upstreamBody, &data); err != nil {
-		return nil, err
+		return nil, Usage{}, err
 	}
 
 	// Unwrap v1internal response
@@ -81,6 +87,24 @@ func TransformOpenAIResponse(upstreamBody []byte, model string) (map[string]inte
 		}
 	}
 
+	// Usage Logic
+	usage := Usage{}
+	if um, ok := inner["usageMetadata"].(map[string]interface{}); ok {
+		if pt, ok := um["promptTokenCount"].(float64); ok {
+			usage.PromptTokens = int(pt)
+		}
+		if ct, ok := um["candidatesTokenCount"].(float64); ok {
+			usage.CompletionTokens = int(ct)
+		}
+		if tt, ok := um["totalTokenCount"].(float64); ok {
+			usage.TotalTokens = int(tt)
+		}
+	}
+	// Fallback if total is missing but others exist
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+
 	openaiResp := map[string]interface{}{
 		"id":      fmt.Sprintf("chatcmpl-%d", 12345), // Should be more unique
 		"object":  "chat.completion",
@@ -96,7 +120,12 @@ func TransformOpenAIResponse(upstreamBody []byte, model string) (map[string]inte
 				"finish_reason": "stop",
 			},
 		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     usage.PromptTokens,
+			"completion_tokens": usage.CompletionTokens,
+			"total_tokens":      usage.TotalTokens,
+		},
 	}
 
-	return openaiResp, nil
+	return openaiResp, usage, nil
 }

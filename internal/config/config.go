@@ -29,13 +29,21 @@ type ModelsConfig struct {
 	FallbackModel string `yaml:"fallback_model"`
 }
 
+type AdminConfig struct {
+	Enabled   bool   `mapstructure:"enabled"`
+	Username  string `mapstructure:"username"`
+	Password  string `mapstructure:"password"`
+	JWTSecret string `mapstructure:"jwt_secret"` // New field
+}
+
 type Config struct {
 	Server struct {
 		Port int    `yaml:"port"`
 		Host string `yaml:"host"` // IP address to bind to (e.g., "0.0.0.0", "192.168.1.100")
 	} `yaml:"server"`
-	Proxy    ProxyConfig     `yaml:"proxy"`
-	Models   ModelsConfig    `yaml:"models"`
+	Proxy    ProxyConfig  `yaml:"proxy"`
+	Models   ModelsConfig `yaml:"models"`
+	Admin    AdminConfig  `yaml:"admin"`
 	Strategy struct {
 		Type string `yaml:"type"`
 	} `yaml:"strategy"`
@@ -101,6 +109,11 @@ models:
   # Model used when the requested model is not recognized or not available
   fallback_model: "gemini-3-flash"
 
+admin:
+  enabled: true
+  # Password for accessing the /admin.html panel
+  password: "admin"
+
 # Account selection strategy
 # options: 
 #   - round-robin: Rotate accounts with every request (default). Distributes load evenly.
@@ -159,12 +172,12 @@ func AddOrUpdateAccount(pathStr string, email string, refreshToken string) error
 			return err
 		}
 		defer f.Close()
-		
+
 		// Ensure newline if needed
 		if len(data) > 0 && data[len(data)-1] != '\n' {
 			f.WriteString("\n")
 		}
-		
+
 		if _, err := f.WriteString(fmt.Sprintf("accounts:\n  - email: %q\n    refresh_token: %q\n", email, refreshToken)); err != nil {
 			return err
 		}
@@ -319,9 +332,15 @@ func SetAccountDisabled(pathStr string, email string, reason string) error {
 					return nil
 				}
 
-				if err := updateOrAppend("disabled", "true"); err != nil { return err }
-				if err := updateOrAppend("disabled_at", fmt.Sprintf("%d", time.Now().Unix())); err != nil { return err }
-				if err := updateOrAppend("disabled_reason", fmt.Sprintf("%q", reason)); err != nil { return err }
+				if err := updateOrAppend("disabled", "true"); err != nil {
+					return err
+				}
+				if err := updateOrAppend("disabled_at", fmt.Sprintf("%d", time.Now().Unix())); err != nil {
+					return err
+				}
+				if err := updateOrAppend("disabled_reason", fmt.Sprintf("%q", reason)); err != nil {
+					return err
+				}
 
 				updated = true
 				break

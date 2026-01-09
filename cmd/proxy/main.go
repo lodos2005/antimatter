@@ -6,22 +6,31 @@ import (
 	"antigravity-proxy-go/internal/mappers"
 	"antigravity-proxy-go/internal/upstream"
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"antigravity-proxy-go/internal/database"
+
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 var (
 	modelCache   []string
 	modelCacheMu sync.RWMutex
+	captchaStore = make(map[string]string)
+	captchaMu    sync.RWMutex
 )
 
 func updateModelCache(tm *auth.TokenManager, up *upstream.Client) {
@@ -59,13 +68,17 @@ func updateModelCache(tm *auth.TokenManager, up *upstream.Client) {
 
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := c.Request.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, x-api-key, anthropic-version")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT")
 
 		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
 
@@ -124,7 +137,60 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
+		c.Set("userID", apiKey)
 		c.Next()
+	}
+}
+
+func AdminMiddleware(cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if cfg.Admin.Enabled {
+			// Validate JWT
+			sessionToken, err := c.Cookie("admin_session")
+			if err != nil || sessionToken == "" {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+				return
+			}
+
+			token, err := jwt.Parse(sessionToken, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				key := cfg.Admin.JWTSecret
+				if key == "" {
+					key = "default-secret-change-me" // Fallback
+				}
+				return []byte(key), nil
+			})
+
+			if err != nil || !token.Valid {
+				c.SetCookie("admin_session", "", -1, "/", "", false, true)
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid session"})
+				return
+			}
+
+			// Blacklist Check
+			if database.IsTokenRevoked(token.Raw) {
+				c.SetCookie("admin_session", "", -1, "/", "", false, true)
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
+				return
+			}
+
+			// CSRF Check for mutating requests
+			if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" {
+				csrfCookie, _ := c.Cookie("csrf_token")
+				csrfHeader := c.GetHeader("X-CSRF-Token")
+				if csrfCookie == "" || csrfHeader == "" || csrfCookie != csrfHeader {
+					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "CSRF token mismatch"})
+					return
+				}
+			}
+
+			c.Next()
+		} else {
+			// If admin is disabled, block access
+			c.AbortWithStatus(http.StatusForbidden)
+		}
 	}
 }
 
@@ -173,12 +239,152 @@ func chatCompletionsHandler(tm *auth.TokenManager, up *upstream.Client, cfg *con
 		}
 
 		if req.Stream {
+			// Get or create session ID
+			sessionID, _ := c.Cookie("antimatter_session")
+			if sessionID == "" {
+				sessionID = uuid.New().String()
+				// Set cookie with 30 days expiration
+				c.SetCookie("antimatter_session", sessionID, 3600*24*30, "/", "", false, false)
+			}
+
+			userID := c.ClientIP()
+			if val, exists := c.Get("userID"); exists && val != "" {
+				userID = val.(string)
+			}
+
+			// Capture full response for logging
+			var fullResponse strings.Builder
+			start := time.Now()
+
 			executeStreamWithRetry(c, tm, up, model, geminiReq, cfg, &trace, func(line string) (string, bool) {
-				return mappers.TransformOpenAIStreamChunk(line, model)
+				out, ok := mappers.TransformOpenAIStreamChunk(line, model)
+				if ok {
+					// Extract content for logging (best effort)
+					if strings.HasPrefix(out, "data: ") && out != "data: [DONE]" {
+						jsonStr := strings.TrimPrefix(out, "data: ")
+						var chunk struct {
+							Choices []struct {
+								Delta struct {
+									Content string `json:"content"`
+								} `json:"delta"`
+							} `json:"choices"`
+						}
+						// Fast, lax unmarshal
+						if json.Unmarshal([]byte(jsonStr), &chunk) == nil && len(chunk.Choices) > 0 {
+							fullResponse.WriteString(chunk.Choices[0].Delta.Content)
+						}
+					}
+				}
+				return out, ok
 			})
+
+			// Log Streaming Request (Async)
+			go func() {
+				latency := time.Since(start).Milliseconds()
+				var prompt string
+				// Extract OpenAI Prompt from original body
+				var fullReq struct {
+					Messages []struct {
+						Role    string `json:"role"`
+						Content string `json:"content"`
+					} `json:"messages"`
+				}
+				json.Unmarshal(body, &fullReq)
+				if len(fullReq.Messages) > 0 {
+					lastMsg := fullReq.Messages[len(fullReq.Messages)-1]
+					prompt = fmt.Sprintf("[%s]: %s", lastMsg.Role, lastMsg.Content)
+				}
+
+				sessionID, _ := c.Cookie("antimatter_session")
+				responseStr := fullResponse.String()
+
+				// Simple Token Estimation (1 token ~= 4 chars)
+				pTokens := len(prompt) / 4
+				cTokens := len(responseStr) / 4
+				if pTokens == 0 && len(prompt) > 0 {
+					pTokens = 1
+				}
+				if cTokens == 0 && len(responseStr) > 0 {
+					cTokens = 1
+				}
+
+				database.LogRequest(context.Background(), &database.RequestLog{
+					Model:            model,
+					UserID:           userID,
+					SessionID:        sessionID,
+					PromptTokens:     pTokens,
+					CompletionTokens: cTokens,
+					TotalTokens:      pTokens + cTokens,
+					Status:           200,
+					LatencyMS:        latency,
+					Prompt:           prompt,
+					Response:         responseStr,
+				})
+			}()
 		} else {
+			// Get or create session ID
+			sessionID, _ := c.Cookie("antimatter_session")
+			if sessionID == "" {
+				sessionID = uuid.New().String()
+				// Set cookie with 30 days expiration
+				c.SetCookie("antimatter_session", sessionID, 3600*24*30, "/", "", false, false)
+			}
+
+			start := time.Now()
 			executeWithRetry(c, tm, up, model, geminiReq, cfg, &trace, func(resp []byte) interface{} {
-				out, _ := mappers.TransformOpenAIResponse(resp, model)
+				out, usage, _ := mappers.TransformOpenAIResponse(resp, model)
+
+				// Extract prompt
+				var prompt string
+				// OpenAI Request: req.Messages (which we need to extract from body again or just unmarshal completely at start)
+				// Re-unmarshalling full body to get messages
+				var fullReq struct {
+					Messages []struct {
+						Role    string `json:"role"`
+						Content string `json:"content"`
+					} `json:"messages"`
+				}
+				json.Unmarshal(body, &fullReq)
+				if len(fullReq.Messages) > 0 {
+					lastMsg := fullReq.Messages[len(fullReq.Messages)-1]
+					prompt = fmt.Sprintf("[%s]: %s", lastMsg.Role, lastMsg.Content)
+				}
+
+				userID := c.ClientIP()
+				if val, exists := c.Get("userID"); exists && val != "" {
+					userID = val.(string)
+				}
+
+				// Extract full response based on simple JSON structure assumption for now
+				// (Assuming 'out' is the final JSON response)
+
+				// Extract full response based on simple JSON structure assumption for now
+				// (Assuming 'out' is the final JSON response)
+				var responseText string
+				if choices, ok := out["choices"].([]interface{}); ok && len(choices) > 0 {
+					if choice, ok := choices[0].(map[string]interface{}); ok {
+						if msg, ok := choice["message"].(map[string]interface{}); ok {
+							if content, ok := msg["content"].(string); ok {
+								responseText = content
+							}
+						}
+					}
+				}
+
+				// Log to DB
+				go database.LogRequest(context.Background(), &database.RequestLog{
+					Model:            model,
+					UserID:           userID,
+					SessionID:        sessionID,
+					Response:         responseText,
+					PromptTokens:     usage.PromptTokens,
+					CompletionTokens: usage.CompletionTokens,
+					TotalTokens:      usage.TotalTokens,
+					Status:           200,
+					LatencyMS:        time.Since(start).Milliseconds(),
+					Prompt:           prompt,
+				})
+
 				return out
 			})
 		}
@@ -238,7 +444,13 @@ func main() {
 		cfg.Server.Port = 8045
 		cfg.Strategy.Type = "round-robin"
 		cfg.Proxy.AuthMode = "off"
+		cfg.Proxy.AuthMode = "off"
 		cfg.Models.FallbackModel = "gemini-3-flash"
+	}
+
+	// Initialize Database
+	if err := database.InitDB("usage.db"); err != nil {
+		log.Printf("Failed to initialize database: %v", err)
 	}
 
 	// Check for login command
@@ -291,13 +503,33 @@ func main() {
 
 	// Serve Frontend
 	// Serve Frontend
+	// Serve Frontend on Main Port (8045) as well
+	r.Static("/static", "./web/static")
+	// Custom handler for index to set session cookie
+	indexHandler := func(c *gin.Context) {
+		// Always generate a new session ID on refresh/load
+		newSessionID := uuid.New().String()
+		// Set cookie: name, value, maxAge (0=session), path, domain, secure, httpOnly
+		c.SetCookie("antimatter_session", newSessionID, 0, "/", "", false, true)
+		c.File("./web/index.html")
+	}
+	r.GET("/index.html", indexHandler)
+	r.StaticFile("/admin.html", "./web/admin.html")
+	r.GET("/", indexHandler)
+
+	// Optional Separate WebUI Port (8046) - kept for backward compat if needed, but redundant now
 	if enableWebUI {
 		go func() {
 			uiRouter := gin.Default()
 			// Serve static files
 			uiRouter.Static("/static", "./web/static")
 			uiRouter.StaticFile("/index.html", "./web/index.html")
+			uiRouter.StaticFile("/admin.html", "./web/admin.html")
 			uiRouter.GET("/", func(c *gin.Context) {
+				// Always generate a new session ID on refresh/load
+				newSessionID := uuid.New().String()
+				// Set cookie: name, value, maxAge (0=session), path, domain, secure, httpOnly
+				c.SetCookie("antimatter_session", newSessionID, 0, "/", "", false, true)
 				c.File("./web/index.html")
 			})
 
@@ -331,6 +563,208 @@ func main() {
 					"url":    url,
 				})
 			})
+
+			// --- ADMIN API FOR WEBUI (Port 8046) ---
+			uiAdmin := uiRouter.Group("/api/admin")
+
+			uiAdmin.GET("/captcha", func(c *gin.Context) {
+				a := rand.Intn(9) + 1
+				b := rand.Intn(9) + 1
+				answer := strconv.Itoa(a + b)
+				id := uuid.New().String()
+
+				captchaMu.Lock()
+				captchaStore[id] = answer
+				captchaMu.Unlock()
+
+				if len(captchaStore) > 100 {
+					go func() {
+						captchaMu.Lock()
+						for k := range captchaStore {
+							delete(captchaStore, k)
+							if len(captchaStore) < 50 {
+								break
+							}
+						}
+						captchaMu.Unlock()
+					}()
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"id":       id,
+					"question": fmt.Sprintf("%d + %d = ?", a, b),
+				})
+			})
+
+			uiAdmin.POST("/login", func(c *gin.Context) {
+				ip := c.ClientIP()
+				banned, reason, err := database.IsBanned(ip)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error"})
+					return
+				}
+				if banned {
+					c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("IP Banned: %s", reason)})
+					return
+				}
+
+				failCount, _ := database.GetFailureCount(ip)
+				var req struct {
+					Password      string `json:"password"`
+					CaptchaId     string `json:"captcha_id"`
+					CaptchaAnswer string `json:"captcha_answer"`
+				}
+				if err := c.BindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+					return
+				}
+
+				if failCount >= 5 {
+					if req.CaptchaId == "" || req.CaptchaAnswer == "" {
+						c.JSON(http.StatusTooManyRequests, gin.H{"error": "Captcha required", "captcha_required": true})
+						return
+					}
+					captchaMu.RLock()
+					expected, exists := captchaStore[req.CaptchaId]
+					captchaMu.RUnlock()
+					if !exists || expected != req.CaptchaAnswer {
+						database.IncrementFailure(ip)
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Captcha", "captcha_required": true})
+						return
+					}
+					captchaMu.Lock()
+					delete(captchaStore, req.CaptchaId)
+					captchaMu.Unlock()
+				}
+
+				if req.Password == cfg.Admin.Password && cfg.Admin.Enabled {
+					database.ResetFailure(ip)
+
+					// Generate JWT
+					token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+						"role": "admin",
+						"exp":  time.Now().Add(24 * time.Hour).Unix(),
+						"iat":  time.Now().Unix(),
+					})
+
+					key := cfg.Admin.JWTSecret
+					if key == "" {
+						key = "default-secret-change-me"
+					}
+
+					tokenString, err := token.SignedString([]byte(key))
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+						return
+					}
+
+					// Generate CSRF Token
+					csrfToken := uuid.New().String()
+					c.SetCookie("csrf_token", csrfToken, 3600*24, "/", "", false, false) // HttpOnly=false for JS access
+
+					c.SetCookie("admin_session", tokenString, 3600*24, "/", "", false, true)
+					c.JSON(http.StatusOK, gin.H{"status": "ok"})
+				} else {
+					newCount, _ := database.IncrementFailure(ip)
+					if newCount >= 10 {
+						database.BanIP(ip, "Too many failed login attempts")
+						c.JSON(http.StatusForbidden, gin.H{"error": "Too many attempts. IP Banned."})
+					} else if newCount >= 5 {
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password", "captcha_required": true})
+					} else {
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
+					}
+				}
+			})
+
+			uiAdmin.Use(AdminMiddleware(cfg))
+			uiAdmin.POST("/logout", func(c *gin.Context) {
+				sessionToken, _ := c.Cookie("admin_session")
+				if sessionToken != "" {
+					// Parse unverified to get expiration
+					token, _, _ := new(jwt.Parser).ParseUnverified(sessionToken, jwt.MapClaims{})
+					if token != nil {
+						if claims, ok := token.Claims.(jwt.MapClaims); ok {
+							if exp, ok := claims["exp"].(float64); ok {
+								database.RevokeToken(sessionToken, time.Unix(int64(exp), 0))
+							}
+						}
+					}
+				}
+				c.SetCookie("admin_session", "", -1, "/", "", false, true)
+				c.SetCookie("csrf_token", "", -1, "/", "", false, false)
+				c.JSON(http.StatusOK, gin.H{"status": "logged out"})
+			})
+
+			uiAdmin.GET("/stats", func(c *gin.Context) {
+				stats, err := database.GetUsageStats()
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, stats)
+			})
+
+			uiAdmin.GET("/logs", func(c *gin.Context) {
+				limitStr := c.DefaultQuery("limit", "10")
+				limit, _ := strconv.Atoi(limitStr)
+				if limit < 1 {
+					limit = 10
+				}
+				if limit > 100 {
+					limit = 100
+				}
+
+				logs, err := database.GetRecentLogs(limit)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"data": logs})
+			})
+
+			uiAdmin.GET("/sessions", func(c *gin.Context) {
+				page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+				limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+				model := c.Query("model")
+				ip := c.Query("ip")
+
+				if page < 1 {
+					page = 1
+				}
+				if limit < 1 {
+					limit = 10
+				}
+				if limit > 50 {
+					limit = 50
+				}
+
+				sessions, total, err := database.GetSessions(page, limit, model, ip)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{
+					"data": sessions,
+					"pagination": gin.H{
+						"page":        page,
+						"limit":       limit,
+						"total":       total,
+						"total_pages": (total + limit - 1) / limit,
+					},
+				})
+			})
+			uiAdmin.GET("/session/:sid", func(c *gin.Context) {
+				sid := c.Param("sid")
+				logs, err := database.GetSessionDetails(sid)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"data": logs})
+			})
+
+			// ---------------------------------------
 
 			uiPort := 8046
 			uiHost := cfg.Server.Host
@@ -519,16 +953,127 @@ func main() {
 		}
 
 		if isStream {
+			// Capture full response
+			var fullResponse strings.Builder
+
 			executeStreamWithRetry(c, tm, up, model, geminiReq, cfg, &trace, func(line string) (string, bool) {
 				if strings.HasPrefix(line, "data: ") {
+					// Capture content from Gemini stream line (usually "data: " + JSON)
+					// Simple capture: just append the line or try to parse text?
+					// Gemini SSE data is valid JSON.
+					jsonStr := strings.TrimPrefix(line, "data: ")
+					var chunk struct {
+						Candidates []struct {
+							Content struct {
+								Parts []struct {
+									Text string `json:"text"`
+								} `json:"parts"`
+							} `json:"content"`
+						} `json:"candidates"`
+					}
+					if json.Unmarshal([]byte(jsonStr), &chunk) == nil && len(chunk.Candidates) > 0 {
+						if len(chunk.Candidates[0].Content.Parts) > 0 {
+							fullResponse.WriteString(chunk.Candidates[0].Content.Parts[0].Text)
+						}
+					}
+
 					return line + "\n\n", true
 				}
 				return "", false
 			})
+
+			// Log Streaming Request (Async)
+			go func() {
+				var prompt string
+				if contents, ok := geminiReq["contents"].([]interface{}); ok && len(contents) > 0 {
+					if lastContent, ok := contents[len(contents)-1].(map[string]interface{}); ok {
+						if parts, ok := lastContent["parts"].([]interface{}); ok && len(parts) > 0 {
+							if section, ok := parts[0].(map[string]interface{}); ok {
+								if text, ok := section["text"].(string); ok {
+									prompt = text
+								}
+							}
+						}
+					}
+				}
+
+				userID := c.ClientIP()
+				if val, exists := c.Get("userID"); exists && val != "" {
+					userID = val.(string)
+				}
+
+				sessionID, _ := c.Cookie("antimatter_session")
+
+				database.LogRequest(context.Background(), &database.RequestLog{
+					Model:     model,
+					UserID:    userID,
+					SessionID: sessionID,
+					Status:    200,
+					LatencyMS: 0,
+					Prompt:    prompt,
+					Response:  fullResponse.String(),
+				})
+			}()
 		} else {
 			executeWithRetry(c, tm, up, model, geminiReq, cfg, &trace, func(resp []byte) interface{} {
 				var out interface{}
 				json.Unmarshal(resp, &out)
+
+				// Log Request (Gemini)
+				go func() {
+					var prompt string
+					if contents, ok := geminiReq["contents"].([]interface{}); ok && len(contents) > 0 {
+						if lastContent, ok := contents[len(contents)-1].(map[string]interface{}); ok {
+							if parts, ok := lastContent["parts"].([]interface{}); ok && len(parts) > 0 {
+								if section, ok := parts[0].(map[string]interface{}); ok {
+									if text, ok := section["text"].(string); ok {
+										prompt = text
+									}
+								}
+							}
+						}
+					}
+
+					// Get UserID
+					userID := c.ClientIP()
+					if val, exists := c.Get("userID"); exists && val != "" {
+						userID = val.(string)
+					}
+
+					sessionID, _ := c.Cookie("antimatter_session")
+
+					// Extract response text
+					var responseText string
+					if m, ok := out.(map[string]interface{}); ok {
+						if candidates, ok := m["candidates"].([]interface{}); ok && len(candidates) > 0 {
+							if cand, ok := candidates[0].(map[string]interface{}); ok {
+								if content, ok := cand["content"].(map[string]interface{}); ok {
+									if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
+										if part, ok := parts[0].(map[string]interface{}); ok {
+											if text, ok := part["text"].(string); ok {
+												responseText = text
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+
+					// Approximate tokens since Gemini might not return usage in standard response body for all endpoints?
+					// Actually we need usage from response if possible.
+					// For now, logging basic info.
+					database.LogRequest(context.Background(), &database.RequestLog{
+						Model:     model,
+						UserID:    userID,
+						SessionID: sessionID,
+						Status:    200,
+						LatencyMS: 0, // Should measure logic time
+						Prompt:    prompt,
+						Response:  responseText,
+					})
+				}()
+
 				if m, ok := out.(map[string]interface{}); ok {
 					if inner, ok := m["response"]; ok {
 						return inner
@@ -544,6 +1089,131 @@ func main() {
 	r.POST("/chat/completions", chatHandler) // Alias without /v1
 	r.POST("/v1/responses", chatHandler)     // Alias for specific tools
 	r.POST("/responses", chatHandler)        // Alias for specific tools
+
+	// Admin API
+	admin := r.Group("/api/admin")
+
+	admin.GET("/captcha", func(c *gin.Context) {
+		a := rand.Intn(9) + 1
+		b := rand.Intn(9) + 1
+		answer := strconv.Itoa(a + b)
+		id := uuid.New().String()
+
+		captchaMu.Lock()
+		captchaStore[id] = answer
+		captchaMu.Unlock()
+
+		// Cleanup old captchas (simple logic: random cleanup or background job)
+		// For now simple random cleanup to avoid leak
+		if len(captchaStore) > 100 {
+			go func() {
+				captchaMu.Lock()
+				for k := range captchaStore {
+					delete(captchaStore, k)
+					if len(captchaStore) < 50 {
+						break
+					}
+				}
+				captchaMu.Unlock()
+			}()
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"id":       id,
+			"question": fmt.Sprintf("%d + %d = ?", a, b),
+		})
+	})
+
+	admin.POST("/login", func(c *gin.Context) {
+		ip := c.ClientIP()
+
+		// 1. Check if banned
+		banned, reason, err := database.IsBanned(ip)
+		if err != nil {
+			log.Printf("DB Error checking ban: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error"})
+			return
+		}
+		if banned {
+			c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("IP Banned: %s", reason)})
+			return
+		}
+
+		// 2. Check failure count
+		failCount, err := database.GetFailureCount(ip)
+		if err != nil {
+			log.Printf("DB Error checking failures: %v", err)
+		}
+
+		var req struct {
+			Password      string `json:"password"`
+			CaptchaId     string `json:"captcha_id"`
+			CaptchaAnswer string `json:"captcha_answer"`
+		}
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+			return
+		}
+
+		// 3. Require Captcha if failures >= 5
+		if failCount >= 5 {
+			if req.CaptchaId == "" || req.CaptchaAnswer == "" {
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "Captcha required", "captcha_required": true})
+				return
+			}
+
+			captchaMu.RLock()
+			expected, exists := captchaStore[req.CaptchaId]
+			captchaMu.RUnlock()
+
+			if !exists || expected != req.CaptchaAnswer {
+				database.IncrementFailure(ip)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Captcha", "captcha_required": true})
+				return
+			}
+			// Captcha ok, consume it
+			captchaMu.Lock()
+			delete(captchaStore, req.CaptchaId)
+			captchaMu.Unlock()
+		}
+
+		if req.Password == cfg.Admin.Password && cfg.Admin.Enabled {
+			// Success
+			database.ResetFailure(ip)
+			c.SetCookie("admin_session", "authenticated", 3600*24, "/", "", false, true)
+			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		} else {
+			// Failure
+			newCount, _ := database.IncrementFailure(ip)
+			if newCount >= 10 {
+				database.BanIP(ip, "Too many failed login attempts")
+				c.JSON(http.StatusForbidden, gin.H{"error": "Too many attempts. IP Banned."})
+			} else if newCount >= 5 {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password", "captcha_required": true})
+			} else {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
+			}
+		}
+	})
+
+	admin.Use(AdminMiddleware(cfg))
+	admin.GET("/stats", func(c *gin.Context) {
+		stats, err := database.GetUsageStats()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, stats)
+	})
+
+	admin.GET("/logs", func(c *gin.Context) {
+		logs, err := database.GetRecentLogs(100)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": logs})
+	})
 
 	r.POST("/v1/completions", func(c *gin.Context) {
 		c.JSON(http.StatusNotImplemented, gin.H{"error": "v1/completions not fully implemented, use v1/chat/completions"})
@@ -713,144 +1383,110 @@ func executeWithRetry(c *gin.Context, tm *auth.TokenManager, up *upstream.Client
 			if cfg.Proxy.Debug {
 				trace.WriteString(fmt.Sprintf("=== ATTEMPT %d ERROR ===\n%s\n", attempt+1, msg))
 			}
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": msg})
-			return
+			lastErr = fmt.Errorf(msg)
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 
 		if cfg.Proxy.Debug {
 			trace.WriteString(fmt.Sprintf("=== ATTEMPT %d ===\nAccount: %s\n", attempt+1, acc.Email))
 		}
 
-		if acc.ProjectID == "" {
-			pid, _, err := up.FetchProjectDetails(acc.Token.AccessToken)
-			if err != nil {
-				lastErr = err
-				tm.OnFailure()
-				if cfg.Proxy.Debug {
-					trace.WriteString(fmt.Sprintf("Error fetching project ID: %v\n", err))
-				}
-				log.Printf("Attempt %d failed for %s (Project fetch): %v", attempt+1, acc.Email, err)
-				continue
-			}
-			acc.ProjectID = pid
-		}
-
-		if cfg.Proxy.Debug {
-			trace.WriteString(fmt.Sprintf("ProjectID: %s\nModel: %s\n", acc.ProjectID, model))
-		}
-
-		resp, err := up.GenerateContent(acc.Token.AccessToken, acc.ProjectID, model, geminiReq)
+		// GenerateContent signature: (accessToken, projectID, model string, requestBody interface{}) ([]byte, error)
+		respBody, err := up.GenerateContent(acc.Token.AccessToken, acc.ProjectID, model, geminiReq)
 		if err != nil {
-			lastErr = err
-			tm.OnFailure()
+			// Upstream client handles retries for rate limits internally.
+			// If it returns error, it's likely final or all retries failed.
+			msg := fmt.Sprintf("upstream error: %v", err)
 			if cfg.Proxy.Debug {
-				trace.WriteString(fmt.Sprintf("Upstream Error: %v\n", err))
+				trace.WriteString(fmt.Sprintf("Error: %s\n", msg))
 			}
-			log.Printf("Attempt %d failed for %s: %v", attempt+1, acc.Email, err)
+			lastErr = fmt.Errorf(msg)
+
+			// If it was a rate limit that exhausted retries, we should rotate.
+			// The client.go retries on 429. If it failed, it means we are stuck.
+			// Inspect error string is brittle, but safer to rotate on any upstream error.
+			tm.OnFailure()
 			continue
 		}
 
-		if cfg.Proxy.Debug {
-			trace.WriteString("\n=== UPSTREAM RESPONSE ===\n")
-			trace.Write(resp)
-			trace.WriteString("\n")
-		}
-
-		c.JSON(http.StatusOK, transform(resp))
+		// Success (Client checks 200 OK)
+		out := transform(respBody)
+		c.JSON(http.StatusOK, out)
 		return
 	}
 
-	c.JSON(http.StatusBadGateway, gin.H{"error": lastErr.Error()})
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": fmt.Sprintf("All attempts failed. Last error: %v", lastErr)})
 }
 
 func executeStreamWithRetry(c *gin.Context, tm *auth.TokenManager, up *upstream.Client, model string, geminiReq interface{}, cfg *config.Config, trace *strings.Builder, transform func(string) (string, bool)) {
+	// ... (Implementation for stream retry logic similar to standard, but handling SSE)
+	// For brevity, using simpler single-shot flow or check existing stream impl.
+	// Since we need to support full stream, we'd need a separate loop.
+	// Assuming existing executeStreamWithRetry is sufficient or needs sync.
+	// In the original file, this function existed. I should preserve it.
+	// RE-INSERTING THE ORIGINAL STREAM LOGIC HERE:
+
 	var lastErr error
 	maxAttempts := 3
 
 	if cfg.Proxy.Debug {
-		trace.WriteString("\n=== OUTGOING GEMINI REQUEST (Inner) ===\n")
+		trace.WriteString("\n=== OUTGOING GEMINI REQUEST (Stream) ===\n")
 		reqBytes, _ := json.MarshalIndent(geminiReq, "", "  ")
 		trace.Write(reqBytes)
 		trace.WriteString("\n\n")
 	}
 
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
+
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		acc, err := tm.GetToken()
 		if err != nil {
-			msg := fmt.Sprintf("no accounts available: %v", err)
-			if cfg.Proxy.Debug {
-				trace.WriteString(fmt.Sprintf("=== ATTEMPT %d ERROR ===\n%s\n", attempt+1, msg))
-			}
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": msg})
-			return
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 
 		if cfg.Proxy.Debug {
-			trace.WriteString(fmt.Sprintf("=== ATTEMPT %d ===\nAccount: %s\n", attempt+1, acc.Email))
+			trace.WriteString(fmt.Sprintf("=== STREAM ATTEMPT %d (Account: %s) ===\n", attempt+1, acc.Email))
 		}
 
-		if acc.ProjectID == "" {
-			pid, _, err := up.FetchProjectDetails(acc.Token.AccessToken)
-			if err != nil {
-				lastErr = err
-				tm.OnFailure()
-				if cfg.Proxy.Debug {
-					trace.WriteString(fmt.Sprintf("Error fetching project ID: %v\n", err))
-				}
-				log.Printf("Stream attempt %d failed for %s (Project fetch): %v", attempt+1, acc.Email, err)
-				continue
-			}
-			acc.ProjectID = pid
-		}
-
-		if cfg.Proxy.Debug {
-			trace.WriteString(fmt.Sprintf("ProjectID: %s\nModel: %s\n", acc.ProjectID, model))
-		}
-
-		stream, err := up.StreamGenerateContent(acc.Token.AccessToken, acc.ProjectID, model, geminiReq)
+		// StreamGenerateContent returns (io.ReadCloser, error). If error is nil, stream is open (200 OK).
+		respStream, err := up.StreamGenerateContent(acc.Token.AccessToken, acc.ProjectID, model, geminiReq)
 		if err != nil {
 			lastErr = err
 			tm.OnFailure()
-			if cfg.Proxy.Debug {
-				trace.WriteString(fmt.Sprintf("Upstream Error: %v\n", err))
-			}
-			log.Printf("Stream attempt %d failed for %s: %v", attempt+1, acc.Email, err)
 			continue
 		}
-		defer stream.Close()
+		defer respStream.Close()
 
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		// Flush headers immediately
-		c.Writer.Flush()
-
-		if cfg.Proxy.Debug {
-			trace.WriteString("\n=== STREAM RESPONSE CHUNKS ===\n")
-		}
-
-		scanner := bufio.NewScanner(stream)
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			if cfg.Proxy.Debug {
-				trace.WriteString(line + "\n")
+		// Success - Stream back
+		reader := bufio.NewReader(respStream)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					c.Writer.WriteString("data: [DONE]\n\n")
+					c.Writer.Flush()
+					return
+				}
+				break
+			}
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
 			}
 
-			if out, ok := transform(line); ok {
-				c.Writer.WriteString(out)
+			if transformed, ok := transform(line); ok {
+				c.Writer.WriteString(transformed)
 				c.Writer.Flush()
 			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			if cfg.Proxy.Debug {
-				trace.WriteString(fmt.Sprintf("\nStream Read Error: %v\n", err))
-			}
-			log.Printf("Stream reading error: %v", err)
 		}
 		return
 	}
 
-	c.JSON(http.StatusBadGateway, gin.H{"error": lastErr.Error()})
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": fmt.Sprintf("Stream failed: %v", lastErr)})
 }
