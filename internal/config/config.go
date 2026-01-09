@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -135,6 +136,8 @@ proxy:
 models:
   # Model used when the requested model is not recognized or not available
   fallback_model: "gemini-3-flash"
+  # Default system prompt for all chat completions
+  system_prompt: "You are research assistant"
 
 admin:
   enabled: true
@@ -395,7 +398,8 @@ func SetAccountDisabled(pathStr string, email string, reason string) error {
 	return os.WriteFile(pathStr, []byte(file.String()), 0644)
 }
 
-// UpdateSettings updates specific configuration values preserving comments
+// UpdateSettings updates specific configuration values preserving comments.
+// It supports nested keys like "models.system_prompt" and will create missing keys if necessary.
 func UpdateSettings(pathStr string, updates map[string]interface{}) error {
 	data, err := os.ReadFile(pathStr)
 	if err != nil {
@@ -407,50 +411,141 @@ func UpdateSettings(pathStr string, updates map[string]interface{}) error {
 		return err
 	}
 
+	if len(file.Docs) == 0 {
+		return fmt.Errorf("empty yaml file")
+	}
+
+	root, ok := file.Docs[0].Body.(*ast.MappingNode)
+	if !ok {
+		return fmt.Errorf("root is not a mapping node")
+	}
+
 	for key, val := range updates {
-		path, err := yaml.PathString("$." + key)
-		if err != nil {
-			continue // Invalid path
-		}
+		// Split key into parts (e.g., "models.system_prompt")
+		parts := strings.Split(key, ".")
 
-		// Convert config value to string compatible with YAML
-		var valStr string
-		switch v := val.(type) {
-		case string:
-			valStr = fmt.Sprintf("%q", v)
-		case int, int64, float64:
-			valStr = fmt.Sprintf("%v", v)
-		case bool:
-			valStr = fmt.Sprintf("%v", v)
-		default:
-			// Fallback for types we don't expect to update this way
-			continue
-		}
+		// Traverse AST and create missing sections if needed
+		var currentMap = root
+		for i, part := range parts {
+			isLast := i == len(parts)-1
+			found := false
 
-		// Create a dummy node to extract the AST value from
-		dummyYAML := fmt.Sprintf("k: %s", valStr)
-		f, err := parser.ParseBytes([]byte(dummyYAML), 0)
-		if err != nil {
-			continue
-		}
-		if len(f.Docs) == 0 {
-			continue
-		}
-		m, ok := f.Docs[0].Body.(*ast.MappingNode)
-		if !ok || len(m.Values) == 0 {
-			continue
-		}
-		newNode := m.Values[0].Value
+			// Check if key exists in current mapping
+			for _, kv := range currentMap.Values {
+				if k, ok := kv.Key.(*ast.StringNode); ok && k.Value == part {
+					found = true
+					if isLast {
+						// Update value
+						newNode, err := createValueNode(val)
+						if err == nil {
+							kv.Value = newNode
+						}
+					} else {
+						// Navigate deeper
+						if nextMap, ok := kv.Value.(*ast.MappingNode); ok {
+							currentMap = nextMap
+						} else if _, ok := kv.Value.(*ast.NullNode); ok {
+							// If it's a NullNode, replace it with a new MappingNode
+							newMap := &ast.MappingNode{BaseNode: &ast.BaseNode{}}
+							kv.Value = newMap
+							currentMap = newMap
+						} else {
+							// Conflict: path part exists but is not a mapping
+							found = false // Force creation/overwrite logic if we want, but safer to error
+							return fmt.Errorf("config path conflict at %s: %s is not a mapping", key, part)
+						}
+					}
+					break
+				}
+			}
 
-		// Attempt to replace the node at the path
-		if err := path.ReplaceWithNode(file, newNode); err != nil {
-			// If path doesn't exist (e.g. key missing), we skip for now
-			// Implementing "create if missing" is non-trivial with search paths
-			fmt.Printf("Warning: Could not update setting %s (maybe key is missing): %v\n", key, err)
+			if !found {
+				// Create new key-value pair using parsing
+				if isLast {
+					// Last part: create key: value
+					newKV, err := createMappingValueNode(part, val)
+					if err != nil {
+						return fmt.Errorf("failed to create node for %s: %v", key, err)
+					}
+					currentMap.Values = append(currentMap.Values, newKV)
+				} else {
+					// Intermediate part: create key: {} and navigate into it
+					emptyMapSnippet := fmt.Sprintf("%s: {}", part)
+					snippetFile, err := parser.ParseBytes([]byte(emptyMapSnippet), 0)
+					if err != nil || len(snippetFile.Docs) == 0 {
+						return fmt.Errorf("failed to parse intermediate node for %s", part)
+					}
+					snippetMap, ok := snippetFile.Docs[0].Body.(*ast.MappingNode)
+					if !ok || len(snippetMap.Values) == 0 {
+						return fmt.Errorf("failed to extract intermediate node for %s", part)
+					}
+					newKV := snippetMap.Values[0]
+					currentMap.Values = append(currentMap.Values, newKV)
+
+					// Navigate into the newly created map
+					if nextMap, ok := newKV.Value.(*ast.MappingNode); ok {
+						currentMap = nextMap
+					} else {
+						return fmt.Errorf("created node for %s is not a mapping", part)
+					}
+				}
+			}
 		}
 	}
 
 	return os.WriteFile(pathStr, []byte(file.String()), 0644)
+}
+
+// createMappingValueNode creates a key-value pair by parsing a YAML snippet
+func createMappingValueNode(key string, val interface{}) (*ast.MappingValueNode, error) {
+	var valStr string
+	switch v := val.(type) {
+	case string:
+		valStr = fmt.Sprintf("%q", v)
+	case int, int64, float64, int32:
+		valStr = fmt.Sprintf("%v", v)
+	case bool:
+		valStr = fmt.Sprintf("%v", v)
+	default:
+		return nil, fmt.Errorf("unsupported type %T", val)
+	}
+
+	snippet := fmt.Sprintf("%s: %s", key, valStr)
+	f, err := parser.ParseBytes([]byte(snippet), 0)
+	if err != nil || len(f.Docs) == 0 {
+		return nil, fmt.Errorf("failed to parse mapping value")
+	}
+	m, ok := f.Docs[0].Body.(*ast.MappingNode)
+	if !ok || len(m.Values) == 0 {
+		return nil, fmt.Errorf("failed to extract mapping value node")
+	}
+	return m.Values[0], nil
+}
+
+// createValueNode is a helper to turn a Go value into a YAML AST node
+func createValueNode(val interface{}) (ast.Node, error) {
+	var valStr string
+	switch v := val.(type) {
+	case string:
+		valStr = fmt.Sprintf("%q", v)
+	case int, int64, float64, int32:
+		valStr = fmt.Sprintf("%v", v)
+	case bool:
+		valStr = fmt.Sprintf("%v", v)
+	default:
+		return nil, fmt.Errorf("unsupported type %T", val)
+	}
+
+	dummyYAML := fmt.Sprintf("k: %s", valStr)
+	f, err := parser.ParseBytes([]byte(dummyYAML), 0)
+	if err != nil || len(f.Docs) == 0 {
+		return nil, fmt.Errorf("failed to parse value")
+	}
+	m, ok := f.Docs[0].Body.(*ast.MappingNode)
+	if !ok || len(m.Values) == 0 {
+		return nil, fmt.Errorf("failed to extract value node")
+	}
+	return m.Values[0].Value, nil
 }
 
 // RemoveAccount removes an account by email from settings.yaml while preserving comments

@@ -230,7 +230,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     fetch(`${API_BASE}/v1/models`, {
-        headers: authHeaders
+        headers: authHeaders,
+        credentials: 'include'
     })
         .then(async res => {
             if (!res.ok) {

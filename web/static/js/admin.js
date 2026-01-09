@@ -26,11 +26,22 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('filter-ip').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') loadAllSessions(1);
     });
+
+    // Real-time system prompt update
+    const systemPromptEl = document.getElementById('set-system-prompt');
+    if (systemPromptEl) {
+        systemPromptEl.addEventListener('input', (e) => {
+            cachedSystemPrompt = e.target.value || "You are a helpful assistant.";
+            updateCurlExamples();
+        });
+    }
 });
 
 async function checkAuth() {
     try {
-        const res = await fetch(`${API_BASE}/api/admin/stats`);
+        const res = await fetch(`${API_BASE}/api/admin/stats`, {
+            credentials: 'include'
+        });
         if (res.ok) {
             showDashboard();
             loadStats();
@@ -39,7 +50,9 @@ async function checkAuth() {
             loadAccounts(); // Load accounts on initial load
 
             // Pre-load system prompt for cURL examples
-            const configRes = await fetch(`${API_BASE}/api/admin/config`);
+            const configRes = await fetch(`${API_BASE}/api/admin/config`, {
+                credentials: 'include'
+            });
             if (configRes.ok) {
                 const cfg = await configRes.json();
                 if (cfg.models && cfg.models.system_prompt) {
@@ -142,7 +155,9 @@ function switchView(viewName) {
 
 async function loadStats() {
     try {
-        const res = await fetch(`${API_BASE}/api/admin/stats`);
+        const res = await fetch(`${API_BASE}/api/admin/stats`, {
+            credentials: 'include'
+        });
         const stats = await res.json();
 
         const grid = document.getElementById('stats-grid');
@@ -175,7 +190,9 @@ async function loadStats() {
 
 async function loadModels() {
     try {
-        const res = await fetch(`${API_BASE}/v1/models`);
+        const res = await fetch(`${API_BASE}/v1/models`, {
+            credentials: 'include'
+        });
         if (!res.ok) {
             throw new Error(`HTTP error! status: ${res.status}`);
         }
@@ -543,6 +560,9 @@ async function saveSettings() {
 
         if (res.ok) {
             alert("Settings saved successfully!");
+            // Update cached prompt and examples after successful save
+            cachedSystemPrompt = payload.models.system_prompt || "You are a helpful assistant.";
+            updateCurlExamples();
         } else {
             const data = await res.json();
             alert("Error saving settings: " + (data.error || "Unknown"));
@@ -776,7 +796,9 @@ async function deleteKey(key) {
 
 async function populateModelDropdown() {
     try {
-        const res = await fetch(`${API_BASE}/v1/models`);
+        const res = await fetch(`${API_BASE}/v1/models`, {
+            credentials: 'include'
+        });
         const data = await res.json();
         const select = document.getElementById('gen-model-select');
 

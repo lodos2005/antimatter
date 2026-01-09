@@ -90,6 +90,18 @@ func CORSMiddleware() gin.HandlerFunc {
 	}
 }
 
+func isAPIPath(path string) bool {
+	if strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/v1beta/") {
+		return true
+	}
+	// OpenAI/Anthropic aliases
+	switch path {
+	case "/chat/completions", "/messages", "/models":
+		return true
+	}
+	return false
+}
+
 func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mode := cfg.Proxy.AuthMode
@@ -103,7 +115,7 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			}
 		}
 
-		if mode == "off" {
+		if mode == "off" && !isAPIPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
