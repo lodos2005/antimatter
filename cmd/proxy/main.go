@@ -1236,6 +1236,7 @@ func main() {
 					cfg.Server = newCfg.Server
 					cfg.Proxy = newCfg.Proxy
 					cfg.Models = newCfg.Models
+					cfg.MCP = newCfg.MCP
 					cfg.Session = newCfg.Session             // Update session settings
 					cfg.Admin.Enabled = newCfg.Admin.Enabled // Only update enabled/password
 					cfg.Admin.Password = newCfg.Admin.Password
