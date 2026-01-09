@@ -64,6 +64,19 @@ func createTables() error {
 		revoked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		expires_at DATETIME
 	);
+	CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		email TEXT UNIQUE,
+		google_sub TEXT,
+		role TEXT DEFAULT 'user',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE TABLE IF NOT EXISTS api_keys (
+		key TEXT PRIMARY KEY,
+		user_id INTEGER,
+		name TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := DB.Exec(query)
 
@@ -378,4 +391,91 @@ func IsTokenRevoked(token string) bool {
 
 func CleanRevokedTokens() {
 	DB.Exec("DELETE FROM revoked_tokens WHERE expires_at < datetime('now')")
+}
+
+// User & API Key Management
+
+type User struct {
+	ID        int64     `json:"id"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type APIKey struct {
+	Key       string    `json:"key"`
+	UserID    int64     `json:"user_id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ValidateAPIKey checks if the key exists in the database
+func ValidateAPIKey(key string) (bool, error) {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE key = ?", key).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// CreateAPIKey adds a new API key
+func CreateAPIKey(key string, userID int64, name string) error {
+	_, err := DB.Exec("INSERT INTO api_keys (key, user_id, name) VALUES (?, ?, ?)", key, userID, name)
+	return err
+}
+
+// GetUserByEmail finds a user by email
+func GetUserByEmail(email string) (*User, error) {
+	u := &User{}
+	err := DB.QueryRow("SELECT id, email, role, created_at FROM users WHERE email = ?", email).Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil // Not found
+	}
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// CreateUser creates a new user
+func CreateUser(email, googleSub string) (int64, error) {
+	res, err := DB.Exec("INSERT INTO users (email, google_sub) VALUES (?, ?)", email, googleSub)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// GetAPIKeys lists all API keys
+func GetAPIKeys() ([]APIKey, error) {
+	rows, err := DB.Query("SELECT key, user_id, name, created_at FROM api_keys ORDER BY created_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []APIKey
+	for rows.Next() {
+		var k APIKey
+		var name sql.NullString
+		var userID sql.NullInt64
+		if err := rows.Scan(&k.Key, &userID, &name, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		if name.Valid {
+			k.Name = name.String
+		}
+		if userID.Valid {
+			k.UserID = userID.Int64
+		}
+		keys = append(keys, k)
+	}
+	return keys, nil
+}
+
+// DeleteAPIKey deletes a key
+func DeleteAPIKey(key string) error {
+	_, err := DB.Exec("DELETE FROM api_keys WHERE key = ?", key)
+	return err
 }

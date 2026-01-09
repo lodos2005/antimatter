@@ -109,70 +109,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (loginBtn) {
-        loginBtn.addEventListener('click', async () => {
-            loginStatus.style.color = 'var(--text-secondary)';
-            loginStatus.textContent = 'Opening login page... Check your browser details/popups.';
-            loginBtn.disabled = true;
+        if (loginBtn) {
+            loginBtn.addEventListener('click', () => {
+                const keyInput = document.getElementById('api-key-input');
+                const key = keyInput.value.trim();
 
-            try {
-                const res = await fetch('/api/antigravity_login', { method: 'POST' });
-                if (!res.ok) {
-                    const errText = await res.text();
-                    throw new Error(errText || 'Login request failed');
+                if (!key) {
+                    loginStatus.style.color = '#ff6b6b';
+                    loginStatus.textContent = 'Please enter an API Key.';
+                    return;
                 }
-                const data = await res.json();
 
-                if (data.url) {
-                    // Open the login URL in a new tab
-                    window.open(data.url, '_blank');
+                // Save key to LocalStorage and Cookie
+                localStorage.setItem('antigravity_key', key);
+                // Set simple cookie for 30 days
+                const d = new Date();
+                d.setTime(d.getTime() + (30 * 24 * 60 * 60 * 1000));
+                document.cookie = "antimatter_key=" + key + ";expires=" + d.toUTCString() + ";path=/";
 
-                    loginStatus.style.color = 'var(--accent-color)';
-                    loginStatus.textContent = 'Login page opened. Waiting for completion...';
+                loginStatus.style.color = '#4ade80';
+                loginStatus.textContent = 'Key saved! Reloading...';
 
-                    // Poll for login success by checking if models endpoint returns valid data
-                    // (If logged in, it returns 200 and list; if not, it returns pending or error)
-                    const pollInterval = setInterval(async () => {
-                        try {
-                            const modelRes = await fetch(`${API_BASE}/v1/models`);
-                            if (modelRes.ok) {
-                                const modelData = await modelRes.json();
-                                if (modelData.data && modelData.data.length > 0) {
-                                    clearInterval(pollInterval);
-                                    loginStatus.style.color = '#4ade80'; // Green
-                                    loginStatus.textContent = 'Login successful! Reloading...';
-                                    setTimeout(() => location.reload(), 1000);
-                                }
-                            }
-                        } catch (e) {
-                            // Ignore errors during polling
-                        }
-                    }, 2000);
-
-                    // Optional: Stop polling after 5 minutes
-                    setTimeout(() => {
-                        clearInterval(pollInterval);
-                        if (loginStatus.textContent.includes('Waiting')) {
-                            loginStatus.style.color = '#ff6b6b';
-                            loginStatus.textContent = 'Login timed out. Please try again.';
-                            loginBtn.disabled = false;
-                        }
-                    }, 300000);
-
-                } else if (data.status === 'success') {
-                    // Should not happen now but kept for legacy
-                    loginStatus.style.color = '#4ade80';
-                    loginStatus.textContent = 'Login successful! Reloading...';
-                    setTimeout(() => location.reload(), 1000);
-                } else {
-                    throw new Error('Unknown login response');
-                }
-            } catch (err) {
-                console.error(err);
-                loginStatus.style.color = '#ff6b6b';
-                loginStatus.textContent = 'Login Error: ' + err.message;
-                loginBtn.disabled = false;
-            }
-        });
+                setTimeout(() => location.reload(), 500);
+            });
+        }
     }
 
     // Dynamic API endpoint - uses same hostname as WebUI but port 8045
@@ -250,7 +210,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Load models
-    fetch(`${API_BASE}/v1/models`)
+    const storedKey = localStorage.getItem('antigravity_key');
+    const authHeaders = {};
+    if (storedKey) {
+        authHeaders['Authorization'] = `Bearer ${storedKey}`;
+    }
+
+    fetch(`${API_BASE}/v1/models`, {
+        headers: authHeaders
+    })
         .then(async res => {
             if (!res.ok) {
                 const errText = await res.text();
@@ -369,7 +337,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`${API_BASE}/v1/chat/completions`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...authHeaders
                 },
                 credentials: 'include', // Send cookies with request
                 body: JSON.stringify({

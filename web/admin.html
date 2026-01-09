@@ -460,7 +460,113 @@
             white-space: pre-wrap;
             color: #eee;
         }
+
+        /* Markdown Overrides */
+        .markdown-body h1,
+        .markdown-body h2,
+        .markdown-body h3,
+        .markdown-body h4,
+        .markdown-body h5,
+        .markdown-body h6 {
+            margin-top: 10px;
+            margin-bottom: 4px;
+            font-weight: 600;
+            line-height: 1.25;
+            color: #fff;
+        }
+
+        .markdown-body h1 {
+            font-size: 1.3em;
+            padding-bottom: 4px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .markdown-body h2 {
+            font-size: 1.15em;
+        }
+
+        .markdown-body h3 {
+            font-size: 1.05em;
+        }
+
+        .markdown-body h4 {
+            font-size: 1em;
+        }
+
+        .markdown-body p {
+            margin-top: 0;
+            margin-bottom: 6px;
+        }
+
+        .markdown-body p+h1,
+        .markdown-body p+h2,
+        .markdown-body p+h3 {
+            margin-top: 14px;
+        }
+
+        .markdown-body hr {
+            height: 1px;
+            background-color: rgba(255, 255, 255, 0.08);
+            border: none;
+            margin: 10px 0;
+        }
+
+        .markdown-body strong {
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .markdown-body code {
+            background: rgba(255, 255, 255, 0.08);
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #d4d4d4;
+        }
+
+        .markdown-body pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-bottom: 8px;
+            margin-top: 4px;
+        }
+
+        .markdown-body pre code {
+            background: none;
+            padding: 0;
+            color: #e5e5e5;
+            border-radius: 0;
+        }
+
+        .markdown-body ul,
+        .markdown-body ol {
+            padding-left: 18px;
+            margin-top: 2px;
+            margin-bottom: 6px;
+        }
+
+        .markdown-body li {
+            margin-bottom: 0px;
+            line-height: 1.35;
+        }
+
+        /* If li contains p, remove p margin to keep list tight */
+        .markdown-body li>p {
+            margin-bottom: 2px;
+        }
+
+        .markdown-body blockquote {
+            border-left: 3px solid rgba(255, 255, 255, 0.15);
+            padding-left: 10px;
+            margin: 6px 0;
+            color: #aaa;
+            font-style: italic;
+        }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 
 <body>
@@ -500,6 +606,12 @@
                 </a>
                 <a href="#" class="nav-item" data-view="sessions" onclick="switchView('sessions')">
                     <span class="icon">🗂️</span> All Sessions
+                </a>
+                <a href="#" class="nav-item" data-view="settings" onclick="switchView('settings')">
+                    <span class="icon">⚙️</span> Settings
+                </a>
+                <a href="#" class="nav-item" data-view="keys" onclick="switchView('keys')">
+                    <span class="icon">🔑</span> API Keys
                 </a>
             </nav>
             <div class="sidebar-footer">
@@ -558,6 +670,135 @@
                 <!-- Pagination -->
                 <div class="pagination-controls" id="pagination-controls">
                     <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Settings View -->
+            <div id="view-settings" class="view-section" style="display: none;">
+                <div class="dashboard-header">
+                    <div>
+                        <h1 style="font-size: 2em; font-weight: 700; margin-bottom: 4px;">Settings</h1>
+                        <p style="color: #666; margin: 0;">Configure server and proxy behavior</p>
+                    </div>
+                    <button onclick="saveSettings()" class="refresh-btn"
+                        style="background: var(--admin-accent); border: none;">
+                        Save Changes
+                    </button>
+                </div>
+
+                <div class="settings-container" style="max-width: 800px;">
+                    <form id="settings-form" onsubmit="event.preventDefault(); saveSettings();">
+
+                        <!-- Server Config -->
+                        <div class="settings-group"
+                            style="margin-bottom: 30px; background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
+                            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.1em; color: #fff;">Server</h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                                <div>
+                                    <label
+                                        style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Port</label>
+                                    <input type="number" id="set-port" class="admin-login-input"
+                                        style="margin: 0; padding: 10px;">
+                                    <p style="font-size: 0.8em; color: #666; margin-top: 5px;">Requires restart to
+                                        apply.
+                                    </p>
+                                </div>
+                                <div>
+                                    <label
+                                        style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Host</label>
+                                    <input type="text" id="set-host" class="admin-login-input"
+                                        style="margin: 0; padding: 10px;">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Proxy Config -->
+                        <div class="settings-group"
+                            style="margin-bottom: 30px; background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
+                            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.1em; color: #fff;">Proxy
+                                Behavior</h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                                <div>
+                                    <label
+                                        style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Auth
+                                        Mode</label>
+                                    <select id="set-auth-mode" class="admin-login-input"
+                                        style="margin: 0; padding: 10px;">
+                                        <option value="off">Off (Public)</option>
+                                        <option value="strict">Strict (Key Required)</option>
+                                        <option value="all_except_health">All Except Health</option>
+                                        <option value="auto">Auto</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label
+                                        style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Fallback
+                                        Model</label>
+                                    <input type="text" id="set-fallback-model" class="admin-login-input"
+                                        style="margin: 0; padding: 10px;">
+                                </div>
+                                <div>
+                                    <label
+                                        style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Strategy</label>
+                                    <select id="set-strategy" class="admin-login-input"
+                                        style="margin: 0; padding: 10px;">
+                                        <option value="round-robin">Round Robin</option>
+                                        <option value="sequential">Sequential</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 20px; display: flex; gap: 20px;">
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                    <input type="checkbox" id="set-debug">
+                                    <span style="color: #ddd;">Debug Mode</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Admin Config -->
+                        <div class="settings-group"
+                            style="margin-bottom: 30px; background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
+                            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.1em; color: #fff;">Admin Panel
+                            </h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                                <div>
+                                    <label
+                                        style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Change
+                                        Password</label>
+                                    <input type="password" id="set-admin-pass" class="admin-login-input"
+                                        placeholder="Leave blank to keep current" style="margin: 0; padding: 10px;">
+                                </div>
+                            </div>
+                            <div style="margin-top: 20px;">
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                    <input type="checkbox" id="set-admin-enabled">
+                                    <span style="color: #ddd;">Enable Admin Panel</span>
+                                </label>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <!-- API Keys View -->
+            <div id="view-keys" class="view-section" style="display: none;">
+                <div class="dashboard-header">
+                    <div>
+                        <h1 style="font-size: 2em; font-weight: 700; margin-bottom: 4px;">API Keys</h1>
+                        <p style="color: #666; margin: 0;">Manage access tokens for remote verification</p>
+                    </div>
+                    <button onclick="createKey()" class="refresh-btn"
+                        style="background: var(--admin-accent); border: none;">
+                        + New Key
+                    </button>
+                </div>
+
+                <div class="settings-group"
+                    style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
+                    <div id="keys-list">
+                        <!-- Keys populated by JS -->
+                        <p style="color: #888; text-align: center;">Loading keys...</p>
+                    </div>
                 </div>
             </div>
         </main>

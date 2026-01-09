@@ -78,16 +78,18 @@
                     &nbsp;&nbsp;- email: "your@email.com"<br>
                     &nbsp;&nbsp;&nbsp;&nbsp;refresh_token: "YOUR_TOKEN"
                 </div>
-                <div style="display: flex; gap: 10px; justify-content: center;">
-                    <button id="login-btn" class="retry-btn" style="display: flex; align-items: center; gap: 8px;">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                            <path
-                                d="M21.35 11.1h-9.17v2.98h5.24c-.27 1.67-1.65 4.51-5.24 4.51-3.21 0-5.83-2.61-5.83-5.84s2.62-5.84 5.83-5.84c1.68 0 3.19.64 4.3 1.7l2.25-2.25C17.07 4.7 15.06 4 12.18 4 7.69 4 4 7.69 4 12.19s3.69 8.19 8.18 8.19c4.72 0 7.89-3.32 7.89-8.03 0-.64-.06-1.12-.11-1.25z" />
-                        </svg>
-                        Login with Google
-                    </button>
-                    <button id="retry-btn" class="retry-btn"
-                        style="background: var(--input-bg); border: 1px solid var(--border-color);">Reload</button>
+                <div style="margin-top: 20px;">
+                    <input type="password" id="api-key-input" class="admin-login-input"
+                        placeholder="Enter API Key / Access Token..."
+                        style="width: 100%; box-sizing: border-box; margin-bottom: 10px;">
+                    <div style="display: flex; gap: 10px; justify-content: center;">
+                        <button id="login-btn" class="retry-btn"
+                            style="display: flex; align-items: center; justify-content: center; background: var(--accent-color); color: #000; border: none; font-weight: 600;">
+                            Login with Key
+                        </button>
+                        <button id="retry-btn" class="retry-btn"
+                            style="background: var(--input-bg); border: 1px solid var(--border-color);">Reload</button>
+                    </div>
                 </div>
                 <p id="login-status" style="margin-top: 15px; font-size: 0.9em; min-height: 20px;"></p>
             </div>

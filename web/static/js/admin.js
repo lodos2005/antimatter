@@ -116,6 +116,10 @@ function switchView(viewName) {
 
     if (viewName === 'sessions') {
         loadAllSessions(1);
+    } else if (viewName === 'settings') {
+        loadSettings();
+    } else if (viewName === 'keys') {
+        loadKeys();
     } else {
         loadRecentLogs();
     }
@@ -288,7 +292,9 @@ function renderLogs(logs) {
             </div>
             <div class="message-row">
                 <div class="role-label role-model">Model</div>
-                <div class="message-content">${escapeHtml(log.response || '(No response captured)')}</div>
+                <div class="message-content markdown-body" style="background: rgba(255, 255, 255, 0.03); padding: 12px; border-radius: 8px; font-size: 0.95em; line-height: 1.5; color: #eee;">
+                    ${marked.parse(log.response || '(No response captured)')}
+                </div>
             </div>
         </div>
     `).join('');
@@ -379,5 +385,175 @@ async function logout() {
     } catch (e) {
         console.error("Logout failed", e);
         location.reload();
+    }
+}
+
+async function loadSettings() {
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/config`);
+        if (!res.ok) throw new Error("Failed to load settings");
+        const cfg = await res.json();
+
+        // Populate fields
+        document.getElementById('set-port').value = cfg.server.port;
+        document.getElementById('set-host').value = cfg.server.host;
+
+        document.getElementById('set-auth-mode').value = cfg.proxy.auth_mode;
+        document.getElementById('set-fallback-model').value = cfg.models.fallback_model;
+        document.getElementById('set-strategy').value = cfg.strategy.type;
+
+        document.getElementById('set-debug').checked = cfg.proxy.debug;
+
+        document.getElementById('set-admin-enabled').checked = cfg.admin.enabled;
+        document.getElementById('set-admin-pass').value = ""; // Don't show current password
+
+    } catch (e) {
+        console.error(e);
+        alert("Failed to load settings: " + e.message);
+    }
+}
+
+async function saveSettings() {
+    const payload = {
+        server: {
+            port: parseInt(document.getElementById('set-port').value) || 8045,
+            host: document.getElementById('set-host').value
+        },
+        proxy: {
+            auth_mode: document.getElementById('set-auth-mode').value,
+            debug: document.getElementById('set-debug').checked
+        },
+        models: {
+            fallback_model: document.getElementById('set-fallback-model').value
+        },
+        strategy: {
+            type: document.getElementById('set-strategy').value
+        },
+        admin: {
+            enabled: document.getElementById('set-admin-enabled').checked,
+            password: document.getElementById('set-admin-pass').value
+        }
+    };
+
+    // Remove password if empty (logic handled in backend too, but cleaner here if strict json bind)
+    if (!payload.admin.password) delete payload.admin.password;
+
+    const btn = document.querySelector('#view-settings .refresh-btn');
+    const originalText = btn.textContent;
+    btn.textContent = "Saving...";
+    btn.disabled = true;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/config`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCookie('csrf_token')
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+            alert("Settings saved successfully!");
+        } else {
+            const data = await res.json();
+            alert("Error saving settings: " + (data.error || "Unknown"));
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Network error while saving settings");
+    } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }
+}
+
+// API Key Management
+async function loadKeys() {
+    const list = document.getElementById('keys-list');
+    list.innerHTML = '<p style="color: #888; text-align: center;">Loading...</p>';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/keys`);
+        const data = await res.json();
+
+        if (!data.keys || data.keys.length === 0) {
+            list.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No API Keys found (Config keys are not listed here).</p>';
+            return;
+        }
+
+        list.innerHTML = `
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="border-bottom: 1px solid var(--admin-border); text-align: left;">
+                        <th style="padding: 12px; color: #888;">Name</th>
+                        <th style="padding: 12px; color: #888;">Key</th>
+                        <th style="padding: 12px; color: #888;">Created</th>
+                        <th style="padding: 12px; color: #888; text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.keys.map(k => `
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td style="padding: 12px; color: #eee;">${escapeHtml(k.name || 'Unnamed')}</td>
+                            <td style="padding: 12px; font-family: monospace; color: #a78bfa;">${escapeHtml(k.key)}</td>
+                            <td style="padding: 12px; color: #666;">${new Date(k.created_at).toLocaleDateString()}</td>
+                            <td style="padding: 12px; text-align: right;">
+                                <button onclick="deleteKey('${k.key}')" style="background: rgba(220, 38, 38, 0.2); color: #f87171; border: 1px solid rgba(220, 38, 38, 0.3); padding: 6px 12px; border-radius: 6px; cursor: pointer;">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        console.error(e);
+        list.innerHTML = `<p style="color: #f87171;">Error loading keys: ${e.message}</p>`;
+    }
+}
+
+async function createKey() {
+    const name = prompt("Enter a name for this API Key (e.g. 'Laptop', 'App 1'):");
+    if (!name) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/keys`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCookie('csrf_token')
+            },
+            body: JSON.stringify({ name })
+        });
+
+        if (res.ok) {
+            loadKeys();
+        } else {
+            const d = await res.json();
+            alert("Error: " + (d.error || "Failed to create key"));
+        }
+    } catch (e) {
+        alert("Network error");
+    }
+}
+
+async function deleteKey(key) {
+    if (!confirm("Are you sure you want to delete this API Key? This action cannot be undone.")) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/keys/${key}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCookie('csrf_token')
+            }
+        });
+
+        if (res.ok) {
+            loadKeys();
+        } else {
+            alert("Failed to delete key");
+        }
+    } catch (e) {
+        alert("Network error");
     }
 }

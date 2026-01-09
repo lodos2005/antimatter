@@ -7,6 +7,8 @@ import (
 	"antigravity-proxy-go/internal/upstream"
 	"bufio"
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,7 +93,9 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mode := cfg.Proxy.AuthMode
 		if mode == "auto" {
-			if cfg.Proxy.AllowLanAccess {
+			// Auto mode: If host exposes to 0.0.0.0 (LAN/Public), mandate auth.
+			// If host is strict local (127.0.0.1 or localhost), default to off.
+			if cfg.Server.Host == "0.0.0.0" {
 				mode = "all_except_health"
 			} else {
 				mode = "off"
@@ -104,11 +108,11 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// If no keys are configured, skip auth unless it's explicitly strict
-		if len(cfg.Proxy.ApiKeys) == 0 && mode != "strict" {
-			c.Next()
-			return
-		}
-
+		// Modified: Now we also support DB keys and Sessions, so we shouldn't skip just because Config keys are empty,
+		// unless we are sure we want "no auth" when config is empty. 
+		// But "strict" or "all_except_health" implies we WANT auth.
+		// If both strict/all_except_health are set, we MUST check auth.
+		
 		if mode == "all_except_health" && (c.Request.URL.Path == "/healthz" || c.Request.URL.Path == "/v1/models") {
 			c.Next()
 			return
@@ -122,19 +126,70 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		authorized := false
-		if len(cfg.Proxy.ApiKeys) > 0 {
-			for _, k := range cfg.Proxy.ApiKeys {
-				if apiKey == k {
+		
+		// 1. Check Config Keys
+		if len(cfg.Proxy.APIKeys) > 0 {
+			for _, k := range cfg.Proxy.APIKeys {
+				if apiKey == k && apiKey != "" {
 					authorized = true
+					c.Set("auth_method", "config_key")
 					break
 				}
 			}
-		} else {
-			// If no keys configured but auth is enabled, access is denied.
 		}
 
+		// 2. Check Database Keys (if key provided and not already authorized)
+		if !authorized && apiKey != "" {
+			valid, err := database.ValidateAPIKey(apiKey)
+			if err == nil && valid {
+				authorized = true
+				c.Set("auth_method", "db_key")
+			}
+		}
+
+		// 3. Check Session Cookie (Google Login / User Session)
 		if !authorized {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			tokenString, err := c.Cookie("antimatter_token")
+			if err == nil && tokenString != "" {
+				token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+					return []byte(cfg.Admin.JWTSecret), nil
+				})
+				if err == nil && token.Valid {
+					if claims, ok := token.Claims.(jwt.MapClaims); ok {
+						c.Set("userID", claims["email"])
+						c.Set("auth_method", "session")
+						authorized = true
+					}
+				}
+			}
+		}
+
+		// Compatibility: If not strict, and no auth provided/valid, and NO config keys were set... 
+		// The original logic allowed access if config APIKeys was empty and mode != strict.
+		// We preserve this behavior ONLY if no auth headers/cookies were presented at all? 
+		// No, user wants to allow Google/DB keys. 
+		// If mode is set to "strict" or "all_except_health", we EXPECT auth.
+		
+		if !authorized {
+			// If we are here, no valid auth method found.
+			
+			// Legacy fallback: If NOT strict, and config keys are empty, we used to allow.
+			// But now we have other auth methods.
+			// If the user INTENDED to have auth enabled (by setting auth_mode), we should block.
+			// If auth_mode is "off", we returned early at top.
+			
+			// Redirect to login if Accept header allows HTML (Browser)
+			if strings.Contains(c.Request.Header.Get("Accept"), "text/html") {
+				// Don't redirect loop if already on login page - assume /login is handled elsewhere or frontend
+				// For now just return 401/JSON or a redirect suggestion
+				// c.Redirect(http.StatusFound, "/login") // We don't have a user login page yet
+			}
+
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Unauthorized", 
+				"message": "Authentication required via API Key or Login",
+				"login_url": "/login", // Hint for frontend
+			})
 			return
 		}
 
@@ -445,8 +500,19 @@ func main() {
 		cfg.Server.Port = 8045
 		cfg.Strategy.Type = "round-robin"
 		cfg.Proxy.AuthMode = "off"
-		cfg.Proxy.AuthMode = "off"
 		cfg.Models.FallbackModel = "gemini-3-flash"
+	}
+
+	// Handle random JWT secret
+	if cfg.Admin.JWTSecret == "random" {
+		bytes := make([]byte, 32)
+		if _, err := crand.Read(bytes); err == nil {
+			cfg.Admin.JWTSecret = hex.EncodeToString(bytes)
+			log.Printf("Admin: Using randomly generated JWT secret")
+		} else {
+			cfg.Admin.JWTSecret = "fallback-secret-if-rand-fails"
+			log.Printf("Warning: Failed to generate random JWT secret, using fallback")
+		}
 	}
 
 	// Initialize Database
@@ -468,10 +534,15 @@ func main() {
 		}
 	}
 
-	// Check for webui flag
+	// Check for flags
 	enableWebUI := false
+	enableProxyAdmin := false
 	for _, arg := range os.Args {
 		if arg == "webui" {
+			enableWebUI = true
+		}
+		if arg == "proxyadmin" {
+			enableProxyAdmin = true
 			enableWebUI = true
 		}
 	}
@@ -508,6 +579,10 @@ func main() {
 	r.Static("/static", "./web/static")
 	// Custom handler for index to set session cookie
 	indexHandler := func(c *gin.Context) {
+		if enableProxyAdmin {
+			c.Redirect(http.StatusFound, "/admin.html")
+			return
+		}
 		// Always generate a new session ID on refresh/load
 		newSessionID := uuid.New().String()
 		// Set cookie: name, value, maxAge (0=session), path, domain, secure, httpOnly
@@ -524,15 +599,26 @@ func main() {
 			uiRouter := gin.Default()
 			// Serve static files
 			uiRouter.Static("/static", "./web/static")
-			uiRouter.StaticFile("/index.html", "./web/index.html")
+			
+			if enableProxyAdmin {
+				uiRouter.GET("/", func(c *gin.Context) {
+					c.Redirect(http.StatusFound, "/admin.html")
+				})
+				uiRouter.GET("/index.html", func(c *gin.Context) {
+					c.Redirect(http.StatusFound, "/admin.html")
+				})
+			} else {
+				uiRouter.StaticFile("/index.html", "./web/index.html")
+				uiRouter.GET("/", func(c *gin.Context) {
+					// Always generate a new session ID on refresh/load
+					newSessionID := uuid.New().String()
+					// Set cookie: name, value, maxAge (0=session), path, domain, secure, httpOnly
+					c.SetCookie("antimatter_session", newSessionID, 0, "/", "", false, true)
+					c.File("./web/index.html")
+				})
+			}
+			
 			uiRouter.StaticFile("/admin.html", "./web/admin.html")
-			uiRouter.GET("/", func(c *gin.Context) {
-				// Always generate a new session ID on refresh/load
-				newSessionID := uuid.New().String()
-				// Set cookie: name, value, maxAge (0=session), path, domain, secure, httpOnly
-				c.SetCookie("antimatter_session", newSessionID, 0, "/", "", false, true)
-				c.File("./web/index.html")
-			})
 
 			// Login Endpoint for WebUI
 			uiRouter.POST("/api/antigravity_login", func(c *gin.Context) {
@@ -747,12 +833,147 @@ func main() {
 				c.JSON(http.StatusOK, gin.H{"logs": logs})
 			})
 
+			// Server Config Handlers
+			uiAdmin.GET("/config", func(c *gin.Context) {
+				// Return safe config subset
+				c.JSON(http.StatusOK, gin.H{
+					"server":   cfg.Server,
+					"proxy":    cfg.Proxy,
+					"models":   cfg.Models,
+					"admin":    gin.H{"enabled": cfg.Admin.Enabled}, // Security: Don't echo password/secret
+					"strategy": cfg.Strategy,
+				})
+			})
+
+			uiAdmin.POST("/config", func(c *gin.Context) {
+				var req map[string]interface{}
+				if err := c.BindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+					return
+				}
+
+				updates := make(map[string]interface{})
+
+				// Flatten the updates to "key.path" format for UpdateSettings
+				if srv, ok := req["server"].(map[string]interface{}); ok {
+					if port, ok := srv["port"]; ok {
+						updates["server.port"] = port
+					}
+					if host, ok := srv["host"]; ok {
+						updates["server.host"] = host
+					}
+				}
+				if prx, ok := req["proxy"].(map[string]interface{}); ok {
+					if auth, ok := prx["auth_mode"]; ok {
+						updates["proxy.auth_mode"] = auth
+					}
+					if lan, ok := prx["allow_lan_access"]; ok {
+						updates["proxy.allow_lan_access"] = lan
+					}
+					if debug, ok := prx["debug"]; ok {
+						updates["proxy.debug"] = debug
+					}
+				}
+				if mdl, ok := req["models"].(map[string]interface{}); ok {
+					if fb, ok := mdl["fallback_model"]; ok {
+						updates["models.fallback_model"] = fb
+					}
+				}
+				if stg, ok := req["strategy"].(map[string]interface{}); ok {
+					if t, ok := stg["type"]; ok {
+						updates["strategy.type"] = t
+					}
+				}
+				if adm, ok := req["admin"].(map[string]interface{}); ok {
+					if en, ok := adm["enabled"]; ok {
+						updates["admin.enabled"] = en
+					}
+					if pwd, ok := adm["password"]; ok && pwd != "" {
+						updates["admin.password"] = pwd
+					}
+					// Not allowing JWT secret update via UI for now as it breaks session immediately
+				}
+
+				if err := config.UpdateSettings("settings.yaml", updates); err != nil {
+					log.Printf("Failed to save settings: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings"})
+					return
+				}
+
+				// Reload config to apply changes immediately where possible
+				newCfg, err := config.LoadConfig("settings.yaml")
+				if err == nil {
+					// Update global config pointer safely
+					cfg.Server = newCfg.Server
+					cfg.Proxy = newCfg.Proxy
+					cfg.Models = newCfg.Models
+					cfg.Admin.Enabled = newCfg.Admin.Enabled // Only update enabled/password
+					cfg.Admin.Password = newCfg.Admin.Password 
+					// Keep existing JWT secret if it was random in memory (or reload if it's persistent)
+					if cfg.Admin.JWTSecret != "random" && newCfg.Admin.JWTSecret != "random" {
+						cfg.Admin.JWTSecret = newCfg.Admin.JWTSecret
+					}
+					
+					cfg.Strategy = newCfg.Strategy
+					log.Println("Configuration reloaded from settings.yaml")
+					
+					// Update TokenManager strategy
+					tm.SetStrategy(cfg.Strategy.Type)
+				}
+
+				c.JSON(http.StatusOK, gin.H{"status": "updated"})
+			})
+
+			// API Key Management Handlers
+			uiAdmin.GET("/keys", func(c *gin.Context) {
+				keys, err := database.GetAPIKeys()
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"keys": keys})
+			})
+
+			uiAdmin.POST("/keys", func(c *gin.Context) {
+				var req struct {
+					Name string `json:"name"`
+				}
+				if err := c.BindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+					return
+				}
+				
+				// Generate random key
+				bytes := make([]byte, 24)
+				if _, err := crand.Read(bytes); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate key"})
+					return
+				}
+				key := "sk-" + hex.EncodeToString(bytes)
+				
+				if err := database.CreateAPIKey(key, 0, req.Name); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				
+				c.JSON(http.StatusOK, gin.H{"key": key, "name": req.Name})
+			})
+
+			uiAdmin.DELETE("/keys/:key", func(c *gin.Context) {
+				key := c.Param("key")
+				if err := database.DeleteAPIKey(key); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+			})
+
 			// ---------------------------------------
 
 			uiPort := 8046
 			uiHost := cfg.Server.Host
 			if uiHost == "" {
-				uiHost = "localhost"
+				uiHost = "127.0.0.1" // Default safety
 			}
 			addr := fmt.Sprintf("%s:%d", uiHost, uiPort)
 			log.Printf("Web UI started on http://%s:%d", uiHost, uiPort)
@@ -1219,10 +1440,15 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
+	// If AllowLANAccess is false, force host to localhost/127.0.0.1
+	// regardless of what might be in Server.Host config if it was set to 0.0.0.0
+	// But if config has a specific IP (like 192.168...), should we respect it?
+	// The user requirement is: "If allow_lan_access false, CANNOT be reached via 127.0.0.1??". Use interpreting as "CANNOT be reached via external network" (Strict Localhost).
 	host := cfg.Server.Host
 	if host == "" {
-		host = "localhost"
+		host = "127.0.0.1" // Default safety
 	}
+	
 	addr := fmt.Sprintf("%s:%d", host, cfg.Server.Port)
 	log.Printf("Antigravity Proxy (Go) started on %s:%d (Strategy: %s)", host, cfg.Server.Port, cfg.Strategy.Type)
 	r.Run(addr)

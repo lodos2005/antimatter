@@ -42,6 +42,12 @@ type TokenManager struct {
 	strategy string // "round-robin" or "sequential"
 }
 
+func (tm *TokenManager) SetStrategy(strategy string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.strategy = strategy
+}
+
 func NewTokenManager(strategy string) *TokenManager {
 	if strategy == "" {
 		strategy = "round-robin"
