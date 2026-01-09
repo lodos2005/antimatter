@@ -100,6 +100,11 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.Models.SystemPrompt = "You are research assistant"
 	}
 
+	// Default MCP Mode
+	if cfg.MCP.Mode == "" {
+		cfg.MCP.Mode = "off"
+	}
+
 	return &cfg, nil
 }
 
@@ -136,6 +141,10 @@ admin:
   # Password for accessing the /admin.html panel
   password: "admin"
   jwt_secret: "random"
+
+mcp:
+  # Mode: "off" (default), "server" (run MCP server), or "provider" (connect to MCP server)
+  mode: "off"
 
 # Account selection strategy
 # options: 

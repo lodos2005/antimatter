@@ -772,6 +772,11 @@ func main() {
 				// Update config fields
 				// Note: In a high-concurrency partial-read scenario this needs a mutex,
 				// but for this app swapping pointers is acceptable for now.
+				// Preserve runtime-generated JWT Secret if config still says "random"
+				if newCfg.Admin.JWTSecret == "random" || newCfg.Admin.JWTSecret == "" {
+					newCfg.Admin.JWTSecret = cfg.Admin.JWTSecret
+				}
+
 				cfg.Server = newCfg.Server
 				cfg.Proxy = newCfg.Proxy
 				cfg.Models = newCfg.Models
@@ -2003,7 +2008,7 @@ func executeWithRetry(c *gin.Context, tm *auth.TokenManager, up *upstream.Client
 			if cfg.Proxy.Debug {
 				trace.WriteString(fmt.Sprintf("=== ATTEMPT %d ERROR ===\n%s\n", attempt+1, msg))
 			}
-			lastErr = fmt.Errorf(msg)
+			lastErr = fmt.Errorf("%s", msg)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
@@ -2021,7 +2026,7 @@ func executeWithRetry(c *gin.Context, tm *auth.TokenManager, up *upstream.Client
 			if cfg.Proxy.Debug {
 				trace.WriteString(fmt.Sprintf("Error: %s\n", msg))
 			}
-			lastErr = fmt.Errorf(msg)
+			lastErr = fmt.Errorf("%s", msg)
 
 			// If it was a rate limit that exhausted retries, we should rotate.
 			// The client.go retries on 429. If it failed, it means we are stuck.

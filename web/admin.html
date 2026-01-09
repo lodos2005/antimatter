@@ -600,6 +600,44 @@
 
 <body>
 
+    <!-- Welcome / No Account Modal -->
+    <dialog id="welcome-modal"
+        style="border: 1px solid rgba(59, 130, 246, 0.3); background: #1a1a1a; color: #fff; border-radius: 16px; padding: 0; width: 100%; max-width: 480px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
+        <div style="padding: 30px; text-align: center;">
+            <div style="font-size: 3em; margin-bottom: 20px;">👋</div>
+            <h2 style="margin: 0 0 10px 0; font-size: 1.5em; font-weight: 700;">Welcome to Antimatter</h2>
+            <p style="color: #aaa; line-height: 1.6; margin-bottom: 30px;">
+                No Google Accounts were found. To use the proxy for AI requests, you need to connect at least one Google
+                Cloud account.
+            </p>
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button onclick="document.getElementById('welcome-modal').close(); loginWithGoogle();" class="admin-btn"
+                    style="background: var(--admin-accent); color: white; border: none;">
+                    Connect Google Account
+                </button>
+
+                <div
+                    style="margin-top: 20px; font-size: 0.8em; color: #666; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                    <span>🔒</span>
+                    <span>Your data is processed locally and sent directly to Google Cloud APIs. No data is shared with
+                        any other third-party servers.</span>
+                </div>
+
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Global Blocking Overlay for Operations -->
+    <div id="blocking-overlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; justify-content: center; align-items: center; flex-direction: column; backdrop-filter: blur(5px);">
+        <div class="spinner"
+            style="width: 50px; height: 50px; border-width: 4px; border-color: var(--admin-accent) transparent var(--admin-accent) transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px;">
+        </div>
+        <h3 style="color: white; font-weight: 600; font-size: 1.2em;">Waiting for Google Login...</h3>
+        <p style="color: #aaa; margin-top: 10px; font-size: 0.9em;">Please complete the sign-in in the popup window.</p>
+    </div>
+
     <div id="login-overlay" class="login-view" style="display: flex;">
         <div class="admin-login-card">
             <h2 style="font-size: 2em; margin-bottom: 8px; font-weight: 700;">Admin Access</h2>
@@ -647,6 +685,15 @@
                 <button onclick="logout()" class="logout-btn">
                     <span class="icon">🚪</span> Logout
                 </button>
+                <div
+                    style="margin-top: 20px; font-size: 0.75em; color: #666; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px;">
+                    <span style="font-size: 1.2em;">🔒</span>
+                    <span style="line-height: 1.4;">Your data is processed locally and sent directly to Google Cloud
+                        APIs. No data is shared with any other third-party servers.</span>
+                    <span style="line-height: 1.4; margin-top: 10px;">Antimatter can make mistakes. Please verify
+                        important information.</span>
+                    <span style="margin-top: 10px; font-weight: 500; color: #888;">Powered by Google Gemini 2.0</span>
+                </div>
             </div>
         </aside>
 

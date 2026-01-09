@@ -68,6 +68,8 @@ async function login() {
             showDashboard();
             loadStats();
             loadRecentLogs();
+            loadModels();
+            loadAccounts();
         } else {
             msg.textContent = data.error || 'Login failed';
 
@@ -795,25 +797,36 @@ async function populateModelDropdown() {
 
 // Account Management
 async function loadAccounts() {
-    const list = document.getElementById('accounts-list-settings');
-    if (!list) {
-        console.error('accounts-list-settings element not found');
-        return;
-    }
-    list.innerHTML = '<p style="color: #888; text-align: center;">Loading...</p>';
-
     try {
-        console.log('Fetching accounts from:', `${API_BASE}/api/admin/accounts`);
         const res = await fetch(`${API_BASE}/api/admin/accounts`, { cache: 'no-store' });
-
         if (!res.ok) {
             throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         }
 
         const data = await res.json();
-        console.log('Accounts data:', data);
+        const accounts = data.accounts || [];
 
-        if (!data.accounts || data.accounts.length === 0) {
+        // 1. Initial Prompt Check (Independent of UI)
+        if (accounts.length === 0) {
+            // Check if we should prompt (on dashboard, first time)
+            if (!window.hasPromptedAccount && document.getElementById('view-dashboard').style.display !== 'none') {
+                window.hasPromptedAccount = true;
+                setTimeout(() => {
+                    const modal = document.getElementById('welcome-modal');
+                    if (modal) modal.showModal();
+                }, 500);
+            }
+        }
+
+        // 2. Render List (If UI element exists)
+        const list = document.getElementById('accounts-list-settings');
+        if (!list) {
+            // Dashboard view: Just logging or doing nothing else
+            return;
+        }
+
+        // We have the list element, proceed to render
+        if (accounts.length === 0) {
             list.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No accounts found. Add an account to get started.</p>';
             return;
         }
@@ -829,7 +842,7 @@ async function loadAccounts() {
                     </tr>
                 </thead>
                 <tbody>
-                    ${data.accounts.map(acc => `
+                    ${accounts.map(acc => `
                         <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
                             <td style="padding: 12px; color: #eee;">${escapeHtml(acc.email)}</td>
                             <td style="padding: 12px;">
@@ -851,9 +864,13 @@ async function loadAccounts() {
                 </tbody>
             </table>
         `;
+
     } catch (e) {
         console.error('Error loading accounts:', e);
-        list.innerHTML = `<p style="color: #f87171; text-align: center; padding: 20px;">Error loading accounts: ${e.message}</p>`;
+        const list = document.getElementById('accounts-list-settings');
+        if (list) {
+            list.innerHTML = `<p style="color: #f87171; text-align: center; padding: 20px;">Error loading accounts: ${e.message}</p>`;
+        }
     }
 }
 
@@ -925,6 +942,10 @@ async function loginWithGoogle() {
             </svg>
             <span>Waiting for Login...</span>
         `;
+        // Show blocking overlay
+        const overlay = document.getElementById('blocking-overlay');
+        if (overlay) overlay.style.display = 'flex';
+
         btn.disabled = true;
         btn.style.opacity = '0.7';
         btn.style.cursor = 'not-allowed';
@@ -965,7 +986,7 @@ async function loginWithGoogle() {
                 // If popup is closed, allow a few more checks (grace period)
                 if (popup && popup.closed) {
                     checksAfterClose++;
-                    if (checksAfterClose > 5) {
+                    if (checksAfterClose > 2) {
                         clearInterval(checkInterval);
                         console.log('Login popup closed by user/completed');
                         // Restore button
@@ -973,6 +994,13 @@ async function loginWithGoogle() {
                         btn.disabled = false;
                         btn.style.opacity = '1';
                         btn.style.cursor = 'pointer';
+
+                        // Hide overlay
+                        const overlay = document.getElementById('blocking-overlay');
+                        if (overlay) overlay.style.display = 'none';
+
+                        // Re-check if we need to show welcome modal
+                        reopenWelcomeIfNoAccounts();
                         return;
                     }
                 }
@@ -990,19 +1018,23 @@ async function loginWithGoogle() {
                             document.getElementById('add-account-modal').close();
                             loadAccounts();
                             alert('Account added successfully!');
+                            location.reload();
 
                             // Restore button (though modal closes, good practice)
                             btn.innerHTML = originalContent;
                             btn.disabled = false;
                             btn.style.opacity = '1';
                             btn.style.cursor = 'pointer';
+
+                            const overlay = document.getElementById('blocking-overlay');
+                            if (overlay) overlay.style.display = 'none';
                         }
                     }
                 } catch (e) {
                     console.error('Error checking accounts:', e);
                 }
 
-                if (attempts >= 120) { // 2 minute timeout
+                if (attempts >= 600) { // 2 minute timeout (600 * 200ms)
                     clearInterval(checkInterval);
                     alert('Login timeout. Please try again.');
                     // Restore button
@@ -1010,8 +1042,13 @@ async function loginWithGoogle() {
                     btn.disabled = false;
                     btn.style.opacity = '1';
                     btn.style.cursor = 'pointer';
+
+                    const overlay = document.getElementById('blocking-overlay');
+                    if (overlay) overlay.style.display = 'none';
+
+                    reopenWelcomeIfNoAccounts();
                 }
-            }, 1000);
+            }, 200);
         }
     } catch (e) {
         console.error(e);
@@ -1022,6 +1059,11 @@ async function loginWithGoogle() {
             btn.disabled = false;
             btn.style.opacity = '1';
             btn.style.cursor = 'pointer';
+
+            const overlay = document.getElementById('blocking-overlay');
+            if (overlay) overlay.style.display = 'none';
+
+            reopenWelcomeIfNoAccounts();
         }
     }
 }
@@ -1051,5 +1093,20 @@ async function copyCode(elementId, btn) {
     } catch (err) {
         console.error('Failed to copy: ', err);
         btn.textContent = 'Error';
+    }
+}
+
+async function reopenWelcomeIfNoAccounts() {
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/accounts`);
+        if (res.ok) {
+            const data = await res.json();
+            if (!data.accounts || data.accounts.length === 0) {
+                const modal = document.getElementById('welcome-modal');
+                if (modal) modal.showModal();
+            }
+        }
+    } catch (e) {
+        console.error("Failed to check accounts for reopen:", e);
     }
 }
