@@ -198,6 +198,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     newChatBtn.addEventListener('click', () => {
         editingWrapper = null;
+        // Optionally clear session cookie to ensure a fresh session ID on next request
+        document.cookie = "antimatter_session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
         chatContainer.innerHTML = `
                     <div class="message-wrapper">
                         <div class="message">
@@ -290,6 +292,52 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('selectedModel', modelSelect.value);
     });
 
+    function getConversationHistory() {
+        const wrappers = document.querySelectorAll('#chat-container .message-wrapper');
+        const history = [];
+
+        wrappers.forEach(wrapper => {
+            const messageDiv = wrapper.querySelector('.message');
+            if (!messageDiv || messageDiv.style.display === 'none') return;
+
+            const avatar = messageDiv.querySelector('.avatar');
+            const isUser = avatar && avatar.classList.contains('user');
+            const isAI = avatar && avatar.classList.contains('ai');
+
+            let role = isUser ? 'user' : 'assistant';
+            let content = '';
+
+            // Try rawContent first (saved during message stream or creation)
+            if (wrapper._rawContent) {
+                content = wrapper._rawContent;
+            } else {
+                // Fallback for user messages with versioning 
+                if (isUser && wrapper._versions && wrapper._versions.length > 0) {
+                    content = wrapper._versions[wrapper._activeVersion].text;
+                } else {
+                    // Last resort: Clean innerText
+                    const contentDiv = wrapper.querySelector('.message-content');
+                    if (contentDiv) {
+                        content = contentDiv.innerText.replace(/\nCopy\n/g, '\n').replace(/Copy$/g, '').trim();
+                        if (content.includes('Thinking...') || content.includes('Hello! How can I')) return;
+                    }
+                }
+            }
+
+            if (!content) return;
+
+            // Enforce role alternation for Gemini compatibility
+            if (history.length > 0 && history[history.length - 1].role === role) {
+                history[history.length - 1].content += "\n\n" + content;
+            } else {
+                history.push({ role, content });
+            }
+        });
+
+        console.log('Sending History:', history);
+        return history;
+    }
+
     async function sendMessageInternal(text, targetWrapper = null) {
         let aiMessageContentDiv;
 
@@ -317,6 +365,7 @@ document.addEventListener('DOMContentLoaded', () => {
             targetWrapper._activeVersion = versions.length - 1;
 
             // Update UI for the user message
+            targetWrapper._rawContent = text;
             targetWrapper.querySelector('.message-content').innerHTML = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;").replace(/\n/g, '<br>');
             updateVersionUI(targetWrapper);
 
@@ -354,9 +403,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 credentials: 'include', // Send cookies with request
                 body: JSON.stringify({
                     model: selectedModel,
-                    messages: [
-                        { role: 'user', content: text }
-                    ],
+                    messages: getConversationHistory(),
                     stream: true
                 }),
                 signal: currentController.signal
@@ -587,13 +634,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             }
-
         } catch (error) {
             document.title = originalTitle;
             if (error.name !== 'AbortError') {
                 aiMessageContentDiv.innerHTML += `<br><span style="color: #ff6b6b">[Error: ${error.message}]</span>`;
             }
         } finally {
+            // Save raw content for history
+            if (aiMessageContentDiv && fullContent) {
+                const wrapper = aiMessageContentDiv.closest('.message-wrapper');
+                if (wrapper) wrapper._rawContent = fullContent;
+            }
+
             currentController = null;
             stopBtn.classList.remove('visible');
             sendBtn.style.display = 'flex';
@@ -641,15 +693,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 Edit
             `;
             editBtn.onclick = () => {
-                userInput.value = text;
-                userInput.focus();
-                // Trigger input event to resize textarea
-                const event = new Event('input', { bubbles: true });
-                userInput.dispatchEvent(event);
-
-                editingWrapper = wrapper;
-                // Optional: Scroll to input
-                inputContainer.scrollIntoView({ behavior: 'smooth' });
+                startEditingMessage(wrapper);
             };
             actionsDiv.appendChild(editBtn);
         }
@@ -691,6 +735,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Versioning initialization for user messages
         if (sender === 'user') {
+            wrapper._rawContent = text; // Store raw text for history
             wrapper._versions = [{ text: text, nodes: [] }];
             wrapper._activeVersion = 0;
 
@@ -773,6 +818,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Switch
         wrapper._activeVersion += delta;
         const newV = versions[wrapper._activeVersion];
+        wrapper._rawContent = newV.text;
 
         // Restore branch
         newV.nodes.forEach(node => chatContainer.appendChild(node));
@@ -781,6 +827,69 @@ document.addEventListener('DOMContentLoaded', () => {
         wrapper.querySelector('.message-content').innerHTML = newV.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;").replace(/\n/g, '<br>');
         updateVersionUI(wrapper);
         scrollToBottom();
+    }
+
+    function startEditingMessage(wrapper) {
+        const contentDiv = wrapper.querySelector('.message-content');
+        const actionsDiv = wrapper.querySelector('.message-actions');
+        const originalText = wrapper._rawContent;
+
+        // Hide original content and actions
+        contentDiv.style.display = 'none';
+        actionsDiv.style.display = 'none';
+
+        // Create edit box
+        const editBox = document.createElement('div');
+        editBox.className = 'edit-box-container';
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'edit-box-textarea';
+        textarea.value = originalText;
+
+        const actions = document.createElement('div');
+        actions.className = 'edit-box-actions';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'edit-cancel-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = () => {
+            editBox.remove();
+            contentDiv.style.display = 'block';
+            actionsDiv.style.display = 'flex';
+        };
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'edit-save-btn';
+        saveBtn.textContent = 'Save & Submit';
+        saveBtn.onclick = () => {
+            const newText = textarea.value.trim();
+            if (newText && newText !== originalText) {
+                editBox.remove();
+                contentDiv.style.display = 'block';
+                actionsDiv.style.display = 'flex';
+                sendMessageInternal(newText, wrapper);
+            } else {
+                cancelBtn.onclick();
+            }
+        };
+
+        actions.appendChild(cancelBtn);
+        actions.appendChild(saveBtn);
+        editBox.appendChild(textarea);
+        editBox.appendChild(actions);
+
+        // Insert after message content
+        const messageBox = wrapper.querySelector('.message');
+        messageBox.appendChild(editBox);
+
+        textarea.focus();
+        // Auto-resize textarea
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+        textarea.oninput = () => {
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
+        };
     }
 
     function enhanceCodeBlocks(container) {
