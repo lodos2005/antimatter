@@ -425,7 +425,7 @@ func UpdateSettings(pathStr string, updates map[string]interface{}) error {
 		parts := strings.Split(key, ".")
 
 		// Traverse AST and create missing sections if needed
-		var currentMap = root
+		currentMap := root
 		for i, part := range parts {
 			isLast := i == len(parts)-1
 			found := false
