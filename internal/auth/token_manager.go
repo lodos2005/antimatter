@@ -162,7 +162,7 @@ func (tm *TokenManager) DisableAccount(email string, reason string) {
 			acc.Disabled = true
 			acc.DisabledAt = time.Now().Unix()
 			acc.DisabledReason = reason
-			
+
 			// Persist to disk
 			if err := config.SetAccountDisabled("settings.yaml", email, reason); err != nil {
 				fmt.Printf("Failed to persist disabled state for %s: %v\n", email, err)
@@ -175,7 +175,7 @@ func (tm *TokenManager) DisableAccount(email string, reason string) {
 func (tm *TokenManager) GetAccounts() []*Account {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
-	
+
 	accounts := make([]*Account, len(tm.accounts))
 	copy(accounts, tm.accounts)
 	return accounts
@@ -202,7 +202,7 @@ func (tm *TokenManager) RefreshToken(acc *Account) error {
 			acc.DisabledAt = time.Now().Unix()
 			reason := "invalid_grant: " + body
 			acc.DisabledReason = reason
-			
+
 			// Persist to disk
 			if err := config.SetAccountDisabled("settings.yaml", acc.Email, reason); err != nil {
 				fmt.Printf("Failed to persist disabled state for %s: %v\n", acc.Email, err)
@@ -224,4 +224,52 @@ func (tm *TokenManager) RefreshToken(acc *Account) error {
 	acc.Token.ExpiryTimestamp = time.Now().Add(time.Duration(data.ExpiresIn) * time.Second)
 
 	return nil
+}
+
+func (tm *TokenManager) UpdateAccounts(cfgAccounts []config.AccountConfig) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	// Rebuild accounts list
+	newAccounts := []*Account{}
+
+	// Create map of existing accounts to preserve tokens if possible
+	existingMap := make(map[string]*Account)
+	for _, acc := range tm.accounts {
+		existingMap[acc.Email] = acc
+	}
+
+	for _, cfgAcc := range cfgAccounts {
+		// If exists, update metadata but keep token cache
+		if existing, ok := existingMap[cfgAcc.Email]; ok {
+			existing.Disabled = cfgAcc.Disabled
+			existing.DisabledAt = cfgAcc.DisabledAt
+			existing.DisabledReason = cfgAcc.DisabledReason
+			// Update refresh token if changed in config
+			if existing.Token.RefreshToken != cfgAcc.RefreshToken {
+				existing.Token.RefreshToken = cfgAcc.RefreshToken
+				// Invalidate access token to force refresh
+				existing.Token.AccessToken = ""
+				existing.Token.ExpiryTimestamp = time.Time{}
+			}
+			newAccounts = append(newAccounts, existing)
+		} else {
+			// New account
+			newAccounts = append(newAccounts, &Account{
+				Email: cfgAcc.Email,
+				Token: TokenData{
+					RefreshToken: cfgAcc.RefreshToken,
+				},
+				Disabled:       cfgAcc.Disabled,
+				DisabledAt:     cfgAcc.DisabledAt,
+				DisabledReason: cfgAcc.DisabledReason,
+			})
+		}
+	}
+
+	tm.accounts = newAccounts
+	// Reset current index if out of bounds
+	if tm.current >= len(tm.accounts) {
+		tm.current = 0
+	}
 }

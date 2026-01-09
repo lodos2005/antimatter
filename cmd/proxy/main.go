@@ -109,10 +109,9 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 
 		// If no keys are configured, skip auth unless it's explicitly strict
 		// Modified: Now we also support DB keys and Sessions, so we shouldn't skip just because Config keys are empty,
-		// unless we are sure we want "no auth" when config is empty. 
+		// unless we are sure we want "no auth" when config is empty.
 		// But "strict" or "all_except_health" implies we WANT auth.
 		// If both strict/all_except_health are set, we MUST check auth.
-		
 
 		if mode == "all_except_health" && c.Request.URL.Path == "/healthz" {
 			c.Next()
@@ -127,7 +126,7 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		authorized := false
-		
+
 		// 1. Check Config Keys
 		if len(cfg.Proxy.APIKeys) > 0 {
 			for _, k := range cfg.Proxy.APIKeys {
@@ -157,7 +156,7 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 				c.Set("auth_method", "session")
 				authorized = true
 			}
-			
+
 			// B. Check for Admin Session (admin_session) - Allows Admin Panel to access API
 			if !authorized {
 				sessionToken, err := c.Cookie("admin_session")
@@ -167,10 +166,12 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 							return nil, fmt.Errorf("unexpected signing method")
 						}
 						key := cfg.Admin.JWTSecret
-						if key == "" { key = "default-secret-change-me" }
+						if key == "" {
+							key = "default-secret-change-me"
+						}
 						return []byte(key), nil
 					})
-					
+
 					if err == nil && token.Valid {
 						// Also check revocation if needed, but for now this proves admin auth
 						c.Set("userID", "admin_session")
@@ -198,20 +199,20 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			}
 		}
 
-		// Compatibility: If not strict, and no auth provided/valid, and NO config keys were set... 
+		// Compatibility: If not strict, and no auth provided/valid, and NO config keys were set...
 		// The original logic allowed access if config APIKeys was empty and mode != strict.
-		// We preserve this behavior ONLY if no auth headers/cookies were presented at all? 
-		// No, user wants to allow Google/DB keys. 
+		// We preserve this behavior ONLY if no auth headers/cookies were presented at all?
+		// No, user wants to allow Google/DB keys.
 		// If mode is set to "strict" or "all_except_health", we EXPECT auth.
-		
+
 		if !authorized {
 			// If we are here, no valid auth method found.
-			
+
 			// Legacy fallback: If NOT strict, and config keys are empty, we used to allow.
 			// But now we have other auth methods.
 			// If the user INTENDED to have auth enabled (by setting auth_mode), we should block.
 			// If auth_mode is "off", we returned early at top.
-			
+
 			// Redirect to login if Accept header allows HTML (Browser)
 			if strings.Contains(c.Request.Header.Get("Accept"), "text/html") {
 				// Don't redirect loop if already on login page - assume /login is handled elsewhere or frontend
@@ -220,13 +221,12 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			}
 
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Unauthorized", 
-				"message": "Authentication required via API Key or Login",
+				"error":     "Unauthorized",
+				"message":   "Authentication required via API Key or Login",
 				"login_url": "/login", // Hint for frontend
 			})
 			return
 		}
-
 
 		// CSRF Check for WebUI Session
 		// If authenticated via Session Cookie, enforce CSRF for state-changing requests (like Chat)
@@ -237,13 +237,13 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 				if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" {
 					csrfCookie, _ := c.Cookie("csrf_token")
 					csrfHeader := c.GetHeader("X-CSRF-Token")
-					
-					// Special case: If no CSRF cookie exists yet for a new session, we might be lenient OR 
+
+					// Special case: If no CSRF cookie exists yet for a new session, we might be lenient OR
 					// the frontend should have fetched it.
 					// Actually, allow if both are missing? No, that defeats the point.
 					// But we need to ensure the frontend GETs a CSRF token first.
 					// We'll set a CSRF cookie on the index page load (handled in indexHandler).
-					
+
 					if csrfCookie == "" || csrfHeader == "" || csrfCookie != csrfHeader {
 						c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "CSRF token mismatch"})
 						return
@@ -377,7 +377,7 @@ func chatCompletionsHandler(tm *auth.TokenManager, up *upstream.Client, cfg *con
 		}
 
 		modelCacheMu.RLock()
-	model := resolveModel(requestedModel, cfg)
+		model := resolveModel(requestedModel, cfg)
 		modelCacheMu.RUnlock()
 
 		// Enforce WebUI Session Limit
@@ -712,7 +712,7 @@ func main() {
 		newSessionID := uuid.New().String()
 		// Set cookie: name, value, maxAge (0=session), path, domain, secure, httpOnly
 		c.SetCookie("antimatter_session", newSessionID, 0, "/", "", false, true)
-		
+
 		// Set CSRF Token cookie (readable by JS)
 		csrfToken := uuid.New().String()
 		c.SetCookie("csrf_token", csrfToken, 0, "/", "", false, false) // HttpOnly=false
@@ -722,7 +722,7 @@ func main() {
 	r.GET("/index.html", indexHandler)
 	r.StaticFile("/admin.html", "./web/admin.html")
 	r.GET("/", indexHandler)
-	
+
 	// anthropicHandler definition moved to top to support WebUI usage
 	anthropicHandler := func(c *gin.Context) {
 		var trace strings.Builder
@@ -841,14 +841,13 @@ func main() {
 		})
 	}
 
-
 	// Optional Separate WebUI Port (8046) - kept for backward compat if needed, but redundant now
 	if enableWebUI {
 		go func() {
 			uiRouter := gin.Default()
 			// Serve static files
 			uiRouter.Static("/static", "./web/static")
-			
+
 			if enableProxyAdmin {
 				uiRouter.GET("/", func(c *gin.Context) {
 					c.Redirect(http.StatusFound, "/admin.html")
@@ -866,13 +865,13 @@ func main() {
 					c.File("./web/index.html")
 				})
 			}
-			
+
 			uiRouter.StaticFile("/admin.html", "./web/admin.html")
-			
+
 			// Add models handler for WebUI (fix for 404 on port 8046)
 			uiRouter.GET("/v1/models", modelsHandler)
 			uiRouter.GET("/models", modelsHandler)
-			
+
 			// Mirror main API endpoints on WebUI port for convenience/testing (Protected by AuthMiddleware)
 			// This allows using port 8046 for API calls just like 8045
 			apiMirror := uiRouter.Group("/")
@@ -1124,6 +1123,9 @@ func main() {
 					if port, ok := srv["port"]; ok {
 						updates["server.port"] = port
 					}
+					if webuiPort, ok := srv["webui_port"]; ok {
+						updates["server.webui_port"] = webuiPort
+					}
 					if host, ok := srv["host"]; ok {
 						updates["server.host"] = host
 					}
@@ -1172,28 +1174,83 @@ func main() {
 				}
 
 				// Reload config to apply changes immediately where possible
+				// Note: Port changes require restart
 				newCfg, err := config.LoadConfig("settings.yaml")
 				if err == nil {
 					// Update global config pointer safely
 					cfg.Server = newCfg.Server
 					cfg.Proxy = newCfg.Proxy
 					cfg.Models = newCfg.Models
-					cfg.Session = newCfg.Session // Update session settings
+					cfg.Session = newCfg.Session             // Update session settings
 					cfg.Admin.Enabled = newCfg.Admin.Enabled // Only update enabled/password
-					cfg.Admin.Password = newCfg.Admin.Password 
+					cfg.Admin.Password = newCfg.Admin.Password
 					// Keep existing JWT secret if it was random in memory (or reload if it's persistent)
 					if cfg.Admin.JWTSecret != "random" && newCfg.Admin.JWTSecret != "random" {
 						cfg.Admin.JWTSecret = newCfg.Admin.JWTSecret
 					}
-					
+
 					cfg.Strategy = newCfg.Strategy
 					log.Println("Configuration reloaded from settings.yaml")
-					
+
 					// Update TokenManager strategy
 					tm.SetStrategy(cfg.Strategy.Type)
+					// Update TokenManager accounts (reload accounts)
+					tm.UpdateAccounts(cfg.Accounts)
 				}
 
 				c.JSON(http.StatusOK, gin.H{"status": "updated"})
+			})
+
+			// Google Accounts Management
+			uiAdmin.GET("/accounts", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"accounts": cfg.Accounts})
+			})
+
+			uiAdmin.POST("/accounts", func(c *gin.Context) {
+				var req struct {
+					Email        string `json:"email"`
+					RefreshToken string `json:"refresh_token"`
+				}
+				if err := c.BindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+					return
+				}
+
+				if req.Email == "" || req.RefreshToken == "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Email and Refresh Token are required"})
+					return
+				}
+
+				if err := config.AddOrUpdateAccount("settings.yaml", req.Email, req.RefreshToken); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Reload config
+				newCfg, err := config.LoadConfig("settings.yaml")
+				if err == nil {
+					cfg.Accounts = newCfg.Accounts
+					tm.UpdateAccounts(cfg.Accounts)
+				}
+
+				c.JSON(http.StatusOK, gin.H{"status": "added", "email": req.Email})
+			})
+
+			uiAdmin.DELETE("/accounts/:email", func(c *gin.Context) {
+				email := c.Param("email")
+				if err := config.RemoveAccount("settings.yaml", email); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Reload config
+				newCfg, err := config.LoadConfig("settings.yaml")
+				if err == nil {
+					cfg.Accounts = newCfg.Accounts
+					tm.UpdateAccounts(cfg.Accounts)
+				}
+
+				c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 			})
 
 			// API Key Management Handlers
@@ -1214,7 +1271,7 @@ func main() {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 					return
 				}
-				
+
 				// Generate random key
 				bytes := make([]byte, 24)
 				if _, err := crand.Read(bytes); err != nil {
@@ -1222,12 +1279,12 @@ func main() {
 					return
 				}
 				key := "sk-" + hex.EncodeToString(bytes)
-				
+
 				if err := database.CreateAPIKey(key, 0, req.Name); err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
-				
+
 				c.JSON(http.StatusOK, gin.H{"key": key, "name": req.Name})
 			})
 
@@ -1544,27 +1601,26 @@ func main() {
 			captchaMu.Unlock()
 		}
 
-
 		// Trim input password
 		req.Password = strings.TrimSpace(req.Password)
 
 		if req.Password == cfg.Admin.Password && cfg.Admin.Enabled {
 			// Success
 			database.ResetFailure(ip)
-			
+
 			// Generate JWT
 			token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 				"authorized": true,
 				"exp":        time.Now().Add(24 * time.Hour).Unix(),
 				"iat":        time.Now().Unix(),
 			})
-			
+
 			// Use the secret key
 			reqKey := cfg.Admin.JWTSecret
 			if reqKey == "" {
 				reqKey = "default-secret-change-me"
 			}
-			
+
 			tokenString, err := token.SignedString([]byte(reqKey))
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate session"})
@@ -1635,7 +1691,7 @@ func main() {
 	if host == "" {
 		host = "127.0.0.1" // Default safety
 	}
-	
+
 	addr := fmt.Sprintf("%s:%d", host, cfg.Server.Port)
 	log.Printf("Antigravity Proxy (Go) started on %s:%d (Strategy: %s)", host, cfg.Server.Port, cfg.Strategy.Type)
 	r.Run(addr)

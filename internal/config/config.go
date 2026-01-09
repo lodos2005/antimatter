@@ -19,14 +19,15 @@ type AccountConfig struct {
 }
 
 type ServerConfig struct {
-	Port int    `yaml:"port" json:"port"`
-	Host string `yaml:"host" json:"host"`
+	Port      int    `yaml:"port" json:"port"`
+	WebUIPort int    `yaml:"webui_port" json:"webui_port"`
+	Host      string `yaml:"host" json:"host"`
 }
 
 type ProxyConfig struct {
-	APIKeys        []string `yaml:"api_keys" json:"api_keys"`
-	AuthMode       string   `yaml:"auth_mode" json:"auth_mode"`
-	Debug          bool     `yaml:"debug" json:"debug"`
+	APIKeys  []string `yaml:"api_keys" json:"api_keys"`
+	AuthMode string   `yaml:"auth_mode" json:"auth_mode"`
+	Debug    bool     `yaml:"debug" json:"debug"`
 }
 
 type ModelsConfig struct {
@@ -76,10 +77,10 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		// If unmarshal fails, we might still want to try returning partial config, or just error.
 		// For robustness, if new fields like Session are missing in user's old config but present in struct,
-		// yaml.Unmarshal usually handles it (zero values). 
+		// yaml.Unmarshal usually handles it (zero values).
 		return nil, err
 	}
-	
+
 	// Ensure positive limit if negative
 	if cfg.Session.WebUIRequestLimit < 0 {
 		cfg.Session.WebUIRequestLimit = -cfg.Session.WebUIRequestLimit
@@ -428,6 +429,70 @@ func UpdateSettings(pathStr string, updates map[string]interface{}) error {
 			fmt.Printf("Warning: Could not update setting %s (maybe key is missing): %v\n", key, err)
 		}
 	}
+
+	return os.WriteFile(pathStr, []byte(file.String()), 0644)
+}
+
+// RemoveAccount removes an account by email from settings.yaml while preserving comments
+func RemoveAccount(pathStr, email string) error {
+	data, err := os.ReadFile(pathStr)
+	if err != nil {
+		return err
+	}
+
+	file, err := parser.ParseBytes(data, parser.ParseComments)
+	if err != nil {
+		return err
+	}
+
+	// Navigate to $.accounts
+	path, err := yaml.PathString("$.accounts")
+	if err != nil {
+		return err
+	}
+
+	// Get the accounts node
+	node, err := path.ReadNode(file)
+	if err != nil {
+		return fmt.Errorf("accounts key not found")
+	}
+
+	// Ensure it's a sequence
+	seq, ok := node.(*ast.SequenceNode)
+	if !ok {
+		return fmt.Errorf("accounts is not a list")
+	}
+
+	// Iterate and find the index to remove
+	idxToRemove := -1
+	for i, val := range seq.Values {
+		// val is likely a MappingNode (the account object)
+		mapping, ok := val.(*ast.MappingNode)
+		if !ok {
+			continue
+		}
+
+		// Find email field in this mapping
+		for _, kv := range mapping.Values {
+			if k, ok := kv.Key.(*ast.StringNode); ok && k.Value == "email" {
+				if v, ok := kv.Value.(*ast.StringNode); ok && v.Value == email {
+					idxToRemove = i
+					break
+				}
+			}
+		}
+		if idxToRemove != -1 {
+			break
+		}
+	}
+
+	if idxToRemove == -1 {
+		return fmt.Errorf("account not found: %s", email)
+	}
+
+	// Remove element at index
+	newValues := append(seq.Values[:idxToRemove], seq.Values[idxToRemove+1:]...)
+	seq.Values = newValues
 
 	return os.WriteFile(pathStr, []byte(file.String()), 0644)
 }

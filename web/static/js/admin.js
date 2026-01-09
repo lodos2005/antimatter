@@ -35,6 +35,7 @@ async function checkAuth() {
             loadStats();
             loadModels();
             loadRecentLogs();
+            loadAccounts(); // Load accounts on initial load
         }
     } catch (e) {
         console.log('Not authenticated');
@@ -123,6 +124,7 @@ function switchView(viewName) {
         loadKeys();
     } else {
         loadRecentLogs();
+        loadAccounts(); // Load accounts on dashboard
     }
 }
 
@@ -168,7 +170,7 @@ async function loadModels() {
         const data = await res.json();
 
         const container = document.getElementById('models-list-container');
-        if (data.data && Array.isArray(data.data)) {
+        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
             container.innerHTML = data.data.map(m => `
                 <span style="
                     background: rgba(59, 130, 246, 0.1); 
@@ -181,6 +183,8 @@ async function loadModels() {
                     ${m.id}
                 </span>
             `).join('');
+        } else {
+            container.innerHTML = '<span style="color: #888;">No available models. Add a Google Account in Settings.</span>';
         }
     } catch (e) {
         console.error("Failed to load models", e);
@@ -430,6 +434,7 @@ async function loadSettings() {
 
         // Populate fields
         document.getElementById('set-port').value = cfg.server.port;
+        document.getElementById('set-webui-port').value = cfg.server.webui_port || 8046;
         document.getElementById('set-host').value = cfg.server.host;
 
         document.getElementById('set-auth-mode').value = cfg.proxy.auth_mode;
@@ -443,6 +448,7 @@ async function loadSettings() {
         document.getElementById('set-admin-enabled').checked = cfg.admin.enabled;
         document.getElementById('set-admin-pass').value = ""; // Don't show current password
 
+        loadAccounts(); // Load accounts when settings view is loaded
     } catch (e) {
         console.error(e);
         alert("Failed to load settings: " + e.message);
@@ -453,6 +459,7 @@ async function saveSettings() {
     const payload = {
         server: {
             port: parseInt(document.getElementById('set-port').value) || 8045,
+            webui_port: parseInt(document.getElementById('set-webui-port').value) || 8046,
             host: document.getElementById('set-host').value
         },
         proxy: {
@@ -691,3 +698,192 @@ async function populateModelDropdown() {
     }
 }
 
+// Account Management
+async function loadAccounts() {
+    const list = document.getElementById('accounts-list-settings');
+    if (!list) {
+        console.error('accounts-list-settings element not found');
+        return;
+    }
+    list.innerHTML = '<p style="color: #888; text-align: center;">Loading...</p>';
+
+    try {
+        console.log('Fetching accounts from:', `${API_BASE}/api/admin/accounts`);
+        const res = await fetch(`${API_BASE}/api/admin/accounts`);
+
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        console.log('Accounts data:', data);
+
+        if (!data.accounts || data.accounts.length === 0) {
+            list.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No accounts found. Add an account to get started.</p>';
+            return;
+        }
+
+        list.innerHTML = `
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="border-bottom: 1px solid var(--admin-border); text-align: left;">
+                        <th style="padding: 12px; color: #888;">Email</th>
+                        <th style="padding: 12px; color: #888;">Status</th>
+                        <th style="padding: 12px; color: #888;">Disabled Reason</th>
+                        <th style="padding: 12px; color: #888; text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.accounts.map(acc => `
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td style="padding: 12px; color: #eee;">${escapeHtml(acc.email)}</td>
+                            <td style="padding: 12px;">
+                                ${acc.disabled
+                ? '<span style="color: #f87171;">Disabled</span>'
+                : '<span style="color: #4ade80;">Active</span>'}
+                            </td>
+                            <td style="padding: 12px; color: #999; font-size: 0.9em;">
+                                ${acc.disabled ? escapeHtml(acc.disabled_reason || 'Manual') : '-'}
+                            </td>
+                            <td style="padding: 12px; text-align: right;">
+                                <button onclick="deleteAccount('${escapeHtml(acc.email)}')" 
+                                    style="background: rgba(220, 38, 38, 0.2); color: #f87171; border: 1px solid rgba(220, 38, 38, 0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.9em;">
+                                    Delete
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        console.error('Error loading accounts:', e);
+        list.innerHTML = `<p style="color: #f87171; text-align: center; padding: 20px;">Error loading accounts: ${e.message}</p>`;
+    }
+}
+
+async function addAccount() {
+    const email = document.getElementById('new-account-email').value;
+    const token = document.getElementById('new-account-token').value;
+
+    if (!email || !token) {
+        alert("Email and Refresh Token are required");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/accounts`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCookie('csrf_token')
+            },
+            body: JSON.stringify({ email: email, refresh_token: token })
+        });
+
+        if (res.ok) {
+            document.getElementById('new-account-email').value = '';
+            document.getElementById('new-account-token').value = '';
+            document.getElementById('add-account-modal').close();
+            loadAccounts();
+        } else {
+            const data = await res.json();
+            alert("Error: " + (data.error || "Failed to add account"));
+        }
+    } catch (e) {
+        alert("Network error");
+    }
+}
+
+async function deleteAccount(email) {
+    if (!confirm(`Are you sure you want to delete account ${email}? This action cannot be undone.`)) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/accounts/${encodeURIComponent(email)}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCookie('csrf_token')
+            }
+        });
+
+        if (res.ok) {
+            loadAccounts();
+        } else {
+            const data = await res.json();
+            alert("Error: " + (data.error || "Failed to delete account"));
+        }
+    } catch (e) {
+        alert("Network error");
+    }
+}
+
+async function loginWithGoogle() {
+    try {
+        // Get current account count before login
+        let initialCount = 0;
+        try {
+            const initialRes = await fetch(`${API_BASE}/api/admin/accounts`);
+            if (initialRes.ok) {
+                const initialData = await initialRes.json();
+                initialCount = initialData.accounts ? initialData.accounts.length : 0;
+            }
+        } catch (e) {
+            console.log('Could not get initial account count');
+        }
+
+        const res = await fetch(`${API_BASE}/api/antigravity_login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (!res.ok) throw new Error('Failed to start login flow');
+        const data = await res.json();
+
+        if (data.url) {
+            const width = 500, height = 600;
+            const left = (screen.width / 2) - (width / 2);
+            const top = (screen.height / 2) - (height / 2);
+
+            const popup = window.open(data.url, 'Google Sign In', `width=${width},height=${height},left=${left},top=${top}`);
+
+            let attempts = 0;
+            const checkInterval = setInterval(async () => {
+                attempts++;
+
+                // Check if popup was closed without completing login
+                if (popup && popup.closed) {
+                    clearInterval(checkInterval);
+                    console.log('Login popup closed by user');
+                    return;
+                }
+
+                try {
+                    const accountsRes = await fetch(`${API_BASE}/api/admin/accounts`);
+                    if (accountsRes.ok) {
+                        const accountsData = await accountsRes.json();
+                        const currentCount = accountsData.accounts ? accountsData.accounts.length : 0;
+
+                        // Only show success if a NEW account was added
+                        if (currentCount > initialCount) {
+                            clearInterval(checkInterval);
+                            if (popup && !popup.closed) popup.close();
+                            document.getElementById('add-account-modal').close();
+                            loadAccounts();
+                            alert('Account added successfully!');
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error checking accounts:', e);
+                }
+
+                if (attempts >= 120) { // 2 minute timeout
+                    clearInterval(checkInterval);
+                    alert('Login timeout. Please try again.');
+                }
+            }, 1000);
+        }
+    } catch (e) {
+        console.error('Error starting Google login:', e);
+        alert('Failed to start Google login: ' + e.message);
+    }
+}

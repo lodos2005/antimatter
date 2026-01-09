@@ -342,7 +342,36 @@
             font-weight: 600;
             font-size: 1rem;
             width: 100%;
-            transition: transform 0.2s, opacity 0.2s;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+
+        /* Modal Backdrop */
+        dialog {
+            max-width: 500px;
+            margin: auto;
+            inset: 0;
+            position: fixed;
+        }
+
+        dialog::backdrop {
+            background: rgba(0, 0, 0, 0.95);
+            backdrop-filter: blur(8px);
+        }
+
+        dialog[open] {
+            animation: slideIn 0.2s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
         }
 
         .admin-btn:hover {
@@ -693,7 +722,7 @@
                     </button>
                 </div>
 
-                <div class="settings-container" style="max-width: 800px;">
+                <div class="settings-container">
                     <form id="settings-form" onsubmit="event.preventDefault(); saveSettings();">
 
                         <!-- Server Config -->
@@ -709,6 +738,13 @@
                                     <p style="font-size: 0.8em; color: #666; margin-top: 5px;">Requires restart to
                                         apply.
                                     </p>
+                                </div>
+                                <div>
+                                    <label
+                                        style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">WebUI
+                                        Port</label>
+                                    <input type="number" id="set-webui-port" class="admin-login-input"
+                                        style="margin: 0; padding: 10px;">
                                 </div>
                                 <div>
                                     <label
@@ -777,6 +813,96 @@
                             </div>
                         </div>
 
+                        <!-- Google Accounts Config -->
+                        <div class="settings-group"
+                            style="margin-bottom: 30px; background: var(--admin-card-bg); padding: 24px; border-radius: 12px; border: 1px solid var(--admin-border);">
+                            <div
+                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                                <div>
+                                    <h3 style="margin: 0 0 4px 0; font-size: 1.1em; color: #fff;">Google Accounts</h3>
+                                    <p style="margin: 0; font-size: 0.85em; color: #888;">Manage Google accounts for
+                                        proxy rotation
+                                    </p>
+                                </div>
+                                <button type="button" onclick="document.getElementById('add-account-modal').showModal()"
+                                    class="refresh-btn"
+                                    style="background: var(--admin-accent); border: none; font-size: 0.9em; padding: 8px 16px; display: flex; align-items: center; gap: 6px;">
+                                    <span style="font-size: 1.1em;">+</span> Add Account
+                                </button>
+                            </div>
+
+                            <div id="accounts-list-settings" style="min-height: 100px;">
+                                <p style="color: #888; text-align: center; padding: 30px 0;">Loading accounts...</p>
+                            </div>
+
+                            <!-- Add Account Modal -->
+                            <dialog id="add-account-modal"
+                                style="background: var(--admin-bg); color: #fff; border: 1px solid var(--admin-border); border-radius: 12px; padding: 0; max-width: 500px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
+                                <div style="padding: 24px;">
+                                    <h3 style="margin: 0 0 8px 0; font-size: 1.3em;">Add Google Account</h3>
+                                    <p style="margin: 0 0 20px 0; color: #888; font-size: 0.9em;">Add a new Google
+                                        account for token
+                                        rotation</p>
+
+                                    <div style="margin-bottom: 16px;">
+                                        <label
+                                            style="display: block; margin-bottom: 6px; color: #ccc; font-weight: 500; font-size: 0.9em;">Email
+                                            Address</label>
+                                        <input type="email" id="new-account-email" class="admin-login-input"
+                                            placeholder="example@gmail.com"
+                                            style="width: 100%; box-sizing: border-box; padding: 10px 12px;">
+                                    </div>
+                                    <div style="margin-bottom: 24px;">
+                                        <label
+                                            style="display: block; margin-bottom: 6px; color: #ccc; font-weight: 500; font-size: 0.9em;">Refresh
+                                            Token</label>
+                                        <input type="text" id="new-account-token" class="admin-login-input"
+                                            placeholder="Enter refresh token"
+                                            style="width: 100%; box-sizing: border-box; padding: 10px 12px; font-family: monospace; font-size: 0.85em;">
+                                        <p style="margin: 6px 0 0 0; font-size: 0.8em; color: #666;">Run <code
+                                                style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px;">./antimatter login</code>
+                                            to obtain a refresh token</p>
+                                    </div>
+
+                                    <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 12px;">
+                                        <div style="flex: 1; height: 1px; background: var(--admin-border);"></div>
+                                        <span style="color: #666; font-size: 0.85em;">OR</span>
+                                        <div style="flex: 1; height: 1px; background: var(--admin-border);"></div>
+                                    </div>
+
+                                    <button type="button" onclick="loginWithGoogle()"
+                                        style="width: 100%; background: #fff; color: #1a1a1a; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.95em; display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 20px; transition: all 0.2s;">
+                                        <svg width="18" height="18" viewBox="0 0 18 18"
+                                            xmlns="http://www.w3.org/2000/svg">
+                                            <path
+                                                d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"
+                                                fill="#4285F4" />
+                                            <path
+                                                d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"
+                                                fill="#34A853" />
+                                            <path
+                                                d="M3.964 10.71c-.18-.54-.282-1.117-.282-1.71s.102-1.17.282-1.71V4.958H.957C.347 6.173 0 7.548 0 9s.348 2.827.957 4.042l3.007-2.332z"
+                                                fill="#FBBC05" />
+                                            <path
+                                                d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"
+                                                fill="#EA4335" />
+                                        </svg>
+                                        Sign in with Google
+                                    </button>
+
+                                    <div
+                                        style="display: flex; justify-content: flex-end; gap: 12px; padding-top: 12px; border-top: 1px solid var(--admin-border);">
+                                        <button type="button"
+                                            onclick="document.getElementById('add-account-modal').close()"
+                                            style="background: transparent; border: 1px solid var(--admin-border); color: #ccc; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 500; transition: all 0.2s;">Cancel</button>
+                                        <button type="button" onclick="addAccount()"
+                                            style="background: var(--admin-accent); border: none; color: #fff; padding: 10px 24px; border-radius: 8px; cursor: pointer; font-weight: 500; transition: all 0.2s;">Add
+                                            Account</button>
+                                    </div>
+                                </div>
+                            </dialog>
+                        </div>
+
                         <!-- Admin Config -->
                         <div class="settings-group"
                             style="margin-bottom: 30px; background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
@@ -798,112 +924,112 @@
                                 </label>
                             </div>
                         </div>
-                    </form>
+                </div>
+
+                </form>
+            </div>
+    </div>
+    <!-- API Keys View -->
+    <div id="view-keys" class="view-section" style="display: none;">
+        <div class="dashboard-header">
+            <div>
+                <h1 style="font-size: 2em; font-weight: 700; margin-bottom: 4px;">API Keys</h1>
+                <p style="color: #666; margin: 0;">Manage access tokens for remote verification</p>
+            </div>
+            <button onclick="createKey()" class="refresh-btn" style="background: var(--admin-accent); border: none;">
+                + New Key
+            </button>
+        </div>
+
+        <div class="settings-group"
+            style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
+            <div id="keys-list">
+                <!-- Keys populated by JS -->
+                <p style="color: #888; text-align: center;">Loading keys...</p>
+            </div>
+        </div>
+
+        <div class="settings-group"
+            style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border); margin-top: 20px;">
+
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="margin: 0; font-weight: 600;">API Usage Generator</h3>
+
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <select id="gen-key-select" onchange="updateCurlExamples()"
+                        style="background: rgba(0,0,0,0.3); color: #fff; border: 1px solid var(--admin-border); padding: 6px 12px; border-radius: 6px; outline: none; font-size: 0.9em;">
+                        <option value="YOUR_API_KEY">Select API Key...</option>
+                    </select>
+
+                    <select id="gen-model-select" onchange="updateCurlExamples()"
+                        style="background: rgba(0,0,0,0.3); color: #fff; border: 1px solid var(--admin-border); padding: 6px 12px; border-radius: 6px; outline: none; font-size: 0.9em;">
+                        <option value="gemini-3-flash">gemini-3-flash</option>
+                        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                        <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+                        <option value="gpt-4o">gpt-4o</option>
+                    </select>
                 </div>
             </div>
-            <!-- API Keys View -->
-            <div id="view-keys" class="view-section" style="display: none;">
-                <div class="dashboard-header">
-                    <div>
-                        <h1 style="font-size: 2em; font-weight: 700; margin-bottom: 4px;">API Keys</h1>
-                        <p style="color: #666; margin: 0;">Manage access tokens for remote verification</p>
-                    </div>
-                    <button onclick="createKey()" class="refresh-btn"
-                        style="background: var(--admin-accent); border: none;">
-                        + New Key
-                    </button>
-                </div>
 
-                <div class="settings-group"
-                    style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
-                    <div id="keys-list">
-                        <!-- Keys populated by JS -->
-                        <p style="color: #888; text-align: center;">Loading keys...</p>
-                    </div>
-                </div>
+            <style>
+                details.api-example {
+                    background: rgba(255, 255, 255, 0.03);
+                    border: 1px solid var(--admin-border);
+                    border-radius: 8px;
+                    margin-bottom: 10px;
+                    overflow: hidden;
+                }
 
-                <div class="settings-group"
-                    style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border); margin-top: 20px;">
+                details.api-example summary {
+                    padding: 15px;
+                    cursor: pointer;
+                    font-weight: 500;
+                    color: #ddd;
+                    list-style: none;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                }
 
-                    <div
-                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h3 style="margin: 0; font-weight: 600;">API Usage Generator</h3>
+                details.api-example summary::-webkit-details-marker {
+                    display: none;
+                }
 
-                        <div style="display: flex; gap: 10px; align-items: center;">
-                            <select id="gen-key-select" onchange="updateCurlExamples()"
-                                style="background: rgba(0,0,0,0.3); color: #fff; border: 1px solid var(--admin-border); padding: 6px 12px; border-radius: 6px; outline: none; font-size: 0.9em;">
-                                <option value="YOUR_API_KEY">Select API Key...</option>
-                            </select>
+                details.api-example summary::after {
+                    content: '+';
+                    font-size: 1.2em;
+                    color: #888;
+                }
 
-                            <select id="gen-model-select" onchange="updateCurlExamples()"
-                                style="background: rgba(0,0,0,0.3); color: #fff; border: 1px solid var(--admin-border); padding: 6px 12px; border-radius: 6px; outline: none; font-size: 0.9em;">
-                                <option value="gemini-3-flash">gemini-3-flash</option>
-                                <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-                                <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
-                                <option value="gpt-4o">gpt-4o</option>
-                            </select>
-                        </div>
-                    </div>
+                details.api-example[open] summary::after {
+                    content: '-';
+                }
 
-                    <style>
-                        details.api-example {
-                            background: rgba(255, 255, 255, 0.03);
-                            border: 1px solid var(--admin-border);
-                            border-radius: 8px;
-                            margin-bottom: 10px;
-                            overflow: hidden;
-                        }
+                details.api-example .content {
+                    padding: 20px;
+                    border-top: 1px solid var(--admin-border);
+                    background: rgba(0, 0, 0, 0.2);
+                }
 
-                        details.api-example summary {
-                            padding: 15px;
-                            cursor: pointer;
-                            font-weight: 500;
-                            color: #ddd;
-                            list-style: none;
-                            display: flex;
-                            align-items: center;
-                            justify-content: space-between;
-                        }
+                .code-block {
+                    background: #0f1115;
+                    padding: 15px;
+                    border-radius: 6px;
+                    font-family: monospace;
+                    font-size: 0.9em;
+                    color: #a5b3ce;
+                    overflow-x: auto;
+                    white-space: pre-wrap;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                }
+            </style>
 
-                        details.api-example summary::-webkit-details-marker {
-                            display: none;
-                        }
-
-                        details.api-example summary::after {
-                            content: '+';
-                            font-size: 1.2em;
-                            color: #888;
-                        }
-
-                        details.api-example[open] summary::after {
-                            content: '-';
-                        }
-
-                        details.api-example .content {
-                            padding: 20px;
-                            border-top: 1px solid var(--admin-border);
-                            background: rgba(0, 0, 0, 0.2);
-                        }
-
-                        .code-block {
-                            background: #0f1115;
-                            padding: 15px;
-                            border-radius: 6px;
-                            font-family: monospace;
-                            font-size: 0.9em;
-                            color: #a5b3ce;
-                            overflow-x: auto;
-                            white-space: pre-wrap;
-                            border: 1px solid rgba(255, 255, 255, 0.1);
-                        }
-                    </style>
-
-                    <details class="api-example" open>
-                        <summary>Chat Completions (cURL)</summary>
-                        <div class="content">
-                            <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Standard
-                                OpenAI-compatible chat completion endpoint.</p>
-                            <pre class="code-block" id="code-chat">curl http://localhost:8045/v1/chat/completions \
+            <details class="api-example" open>
+                <summary>Chat Completions (cURL)</summary>
+                <div class="content">
+                    <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Standard
+                        OpenAI-compatible chat completion endpoint.</p>
+                    <pre class="code-block" id="code-chat">curl http://localhost:8045/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;" \
   -d '{
@@ -913,37 +1039,37 @@
       {"role": "user", "content": "Hello!"}
     ]
   }'</pre>
-                        </div>
-                    </details>
+                </div>
+            </details>
 
-                    <details class="api-example">
-                        <summary>List Models (cURL)</summary>
-                        <div class="content">
-                            <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Retrieve a
-                                list of available models.</p>
-                            <pre class="code-block" id="code-models">curl http://localhost:8045/v1/models \
+            <details class="api-example">
+                <summary>List Models (cURL)</summary>
+                <div class="content">
+                    <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Retrieve a
+                        list of available models.</p>
+                    <pre class="code-block" id="code-models">curl http://localhost:8045/v1/models \
   -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;"</pre>
-                        </div>
-                    </details>
+                </div>
+            </details>
 
-                    <details class="api-example">
-                        <summary>Admin: Create API Key (cURL)</summary>
-                        <div class="content">
-                            <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
-                                Programmatically create a new API key (Requires Admin Password specifically).</p>
-                            <pre class="code-block" id="code-admin-new">curl -X POST http://localhost:8045/api/admin/keys \
+            <details class="api-example">
+                <summary>Admin: Create API Key (cURL)</summary>
+                <div class="content">
+                    <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
+                        Programmatically create a new API key (Requires Admin Password specifically).</p>
+                    <pre class="code-block" id="code-admin-new">curl -X POST http://localhost:8045/api/admin/keys \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer &lt;ADMIN_PASSWORD&gt;" \
   -d '{"name": "New Key from API"}'</pre>
-                        </div>
-                    </details>
+                </div>
+            </details>
 
-                    <details class="api-example">
-                        <summary>Anthropic Messages (cURL)</summary>
-                        <div class="content">
-                            <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
-                                Anthropic-compatible endpoint.</p>
-                            <pre class="code-block" id="code-anthropic">curl http://localhost:8045/v1/messages \
+            <details class="api-example">
+                <summary>Anthropic Messages (cURL)</summary>
+                <div class="content">
+                    <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
+                        Anthropic-compatible endpoint.</p>
+                    <pre class="code-block" id="code-anthropic">curl http://localhost:8045/v1/messages \
   -H "x-api-key: &lt;YOUR_API_KEY&gt;" \
   -H "anthropic-version: 2023-06-01" \
   -H "content-type: application/json" \
@@ -954,11 +1080,11 @@
         {"role": "user", "content": "Hello, world"}
     ]
 }'</pre>
-                        </div>
-                    </details>
                 </div>
-            </div>
-        </main>
+            </details>
+        </div>
+    </div>
+    </main>
     </div>
 
     <script src="/static/js/admin.js"></script>
