@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -144,20 +145,19 @@ func GetRecentLogs(limit int) ([]RequestLog, error) {
 
 // Pagination & List
 func GetSessions(page, limit int, modelFilter, ipFilter string) ([]RequestLog, int, error) {
-	offset := (page - 1) * limit
-	whereClause := "WHERE 1=1"
+	whereClause := "WHERE session_id IS NOT NULL AND session_id != ''"
 	args := []interface{}{}
 
 	if modelFilter != "" {
-		whereClause += " AND model LIKE ?"
-		args = append(args, "%"+modelFilter+"%")
+		whereClause += " AND model = ?"
+		args = append(args, modelFilter)
 	}
 	if ipFilter != "" {
-		whereClause += " AND user_id LIKE ?"
-		args = append(args, "%"+ipFilter+"%")
+		whereClause += " AND user_id = ?"
+		args = append(args, ipFilter)
 	}
 
-	// Get Total Count (including empty session_id as 'unknown')
+	// Get Total Count of distinct sessions
 	var total int
 	countQuery := "SELECT COUNT(DISTINCT COALESCE(NULLIF(session_id, ''), 'unknown-' || CAST(id AS TEXT))) FROM request_logs " + whereClause
 	err := DB.QueryRow(countQuery, args...).Scan(&total)
@@ -165,10 +165,10 @@ func GetSessions(page, limit int, modelFilter, ipFilter string) ([]RequestLog, i
 		return nil, 0, err
 	}
 
-	// Get Sessions (Group by session_id, treating empty as individual sessions)
-	query := fmt.Sprintf(`
-		SELECT id, timestamp, model, user_id, prompt_tokens, completion_tokens, total_tokens, status, latency_ms, prompt, response, 
-		       COALESCE(NULLIF(session_id, ''), 'unknown-' || CAST(id AS TEXT)) as session_id
+	// Get session IDs for this page only
+	offset := (page - 1) * limit
+	sessionIDQuery := fmt.Sprintf(`
+		SELECT DISTINCT COALESCE(NULLIF(session_id, ''), 'unknown-' || CAST(id AS TEXT)) as sid
 		FROM request_logs
 		%s
 		GROUP BY COALESCE(NULLIF(session_id, ''), 'unknown-' || CAST(id AS TEXT))
@@ -176,18 +176,53 @@ func GetSessions(page, limit int, modelFilter, ipFilter string) ([]RequestLog, i
 		LIMIT ? OFFSET ?
 	`, whereClause)
 
-	args = append(args, limit, offset)
-	rows, err := DB.Query(query, args...)
+	sessionArgs := append(args, limit, offset)
+	rows, err := DB.Query(sessionIDQuery, sessionArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 
-	var logs []RequestLog
+	sessionIDs := []string{}
 	for rows.Next() {
+		var sid string
+		rows.Scan(&sid)
+		sessionIDs = append(sessionIDs, sid)
+	}
+
+	if len(sessionIDs) == 0 {
+		return []RequestLog{}, total, nil
+	}
+
+	// Now get ALL logs for these sessions
+	placeholders := make([]string, len(sessionIDs))
+	queryArgs := []interface{}{}
+	for i, sid := range sessionIDs {
+		placeholders[i] = "?"
+		queryArgs = append(queryArgs, sid)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, timestamp, model, user_id, prompt_tokens, completion_tokens, total_tokens, status, latency_ms, prompt, response,
+		       COALESCE(NULLIF(session_id, ''), 'unknown-' || CAST(id AS TEXT)) as session_id
+		FROM request_logs
+		WHERE COALESCE(NULLIF(session_id, ''), 'unknown-' || CAST(id AS TEXT)) IN (%s)
+		ORDER BY timestamp ASC
+	`, strings.Join(placeholders, ","))
+
+	allRows, err := DB.Query(query, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer allRows.Close()
+
+	var logs []RequestLog
+	for allRows.Next() {
 		var l RequestLog
 		var prompt, response, sessionID sql.NullString
-		if err := rows.Scan(&l.ID, &l.Timestamp, &l.Model, &l.UserID, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.Status, &l.LatencyMS, &prompt, &response, &sessionID); err != nil {
+		err := allRows.Scan(&l.ID, &l.Timestamp, &l.Model, &l.UserID, &l.PromptTokens, &l.CompletionTokens,
+			&l.TotalTokens, &l.Status, &l.LatencyMS, &prompt, &response, &sessionID)
+		if err != nil {
 			return nil, 0, err
 		}
 		if prompt.Valid {

@@ -225,18 +225,24 @@ function renderSessionList(container, logs) {
         const dateStr = new Date(s.startTime).toLocaleString();
         const safeId = CSS.escape(s.id); // Escape ID for CSS selector safety
 
+        // Count unique models in this session
+        const uniqueModels = [...new Set(s.logs.map(log => log.model))];
+        const modelDisplay = uniqueModels.length === 1
+            ? uniqueModels[0]
+            : `${uniqueModels.length} models`;
+
         return `
         <div class="session-card" data-sid="${s.id}">
             <div class="session-header" data-session-id="${s.id}">
                 <div class="session-info">
-                    <span class="session-id">${s.id.substring(0, 8)}...</span>
+                    <span class="session-id">${s.id.substring(0, 12)}...</span>
                     <div class="session-meta">
                         <div><strong>User:</strong> ${s.user}</div>
                         <div style="font-size: 0.85em; color: #888;">${dateStr}</div>
                     </div>
                 </div>
                 <div class="session-info">
-                    <span class="status-badge status-200">${s.model}</span>
+                    <span class="status-badge status-200">${modelDisplay}</span>
                     <span class="interaction-count" style="color: #666; font-size: 0.9em;">
                         ${s.logs.length > 0 ? s.logs.length + ' interactions' : 'Click to load'}
                     </span>
@@ -270,6 +276,12 @@ function renderLogs(logs) {
 
     return sorted.map(log => `
         <div class="chat-pair">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <span class="status-badge status-200" style="font-size: 0.75em;">${log.model || 'unknown'}</span>
+                <span style="font-size: 0.8em; color: #666;">
+                    ${log.prompt_tokens || 0}p / ${log.completion_tokens || 0}c tokens • ${log.latency_ms || 0}ms
+                </span>
+            </div>
             <div class="message-row">
                 <div class="role-label role-user">User</div>
                 <div class="message-content">${escapeHtml(log.prompt || '(No prompt)')}</div>
@@ -277,9 +289,6 @@ function renderLogs(logs) {
             <div class="message-row">
                 <div class="role-label role-model">Model</div>
                 <div class="message-content">${escapeHtml(log.response || '(No response captured)')}</div>
-            </div>
-            <div style="font-size: 0.8em; color: #666; margin-top: 8px;">
-                ${log.prompt_tokens} prompt / ${log.completion_tokens} completion tokens • ${log.latency_ms}ms
             </div>
         </div>
     `).join('');
@@ -301,25 +310,29 @@ async function toggleSession(sid, header) {
 
     const isOpen = details.classList.contains('open');
 
-    details.classList.toggle('open');
-    const arrow = header.querySelector('.arrow-icon');
-    arrow.style.transform = !isOpen ? 'rotate(90deg)' : 'rotate(0deg)';
-    arrow.style.display = 'inline-block';
-
-    if (!isOpen && details.children.length <= 1 && details.innerText.includes('Loading')) {
+    // If opening and only has placeholder, load full session
+    if (!isOpen && (details.innerHTML.includes('Click to load') || details.innerHTML.includes('Loading'))) {
         try {
-            const res = await fetch(`${API_BASE}/api/admin/session/${sid}`);
-            if (res.ok) {
-                const data = await res.json();
-                details.innerHTML = renderLogs(data.data);
-                header.querySelector('.interaction-count').textContent = `${data.data.length} interactions`;
+            details.innerHTML = '<p style="padding:20px; text-align:center; color:#666;">Loading...</p>';
+            const res = await fetch(`${API_BASE}/api/admin/session/${encodeURIComponent(sid)}`);
+            const data = await res.json();
+            if (data.logs && data.logs.length > 0) {
+                details.innerHTML = renderLogs(data.logs);
+                const countEl = header.querySelector('.interaction-count');
+                if (countEl) countEl.textContent = `${data.logs.length} interactions`;
             } else {
-                details.innerHTML = '<p style="color:#f87171; padding:20px;">Failed to load details.</p>';
+                details.innerHTML = '<p style="padding:20px; text-align:center; color:#666;">No interactions found.</p>';
             }
         } catch (e) {
-            console.error(e);
-            details.innerHTML = '<p style="color:#f87171; padding:20px;">Error loading details.</p>';
+            console.error('Failed to load session details:', e);
+            details.innerHTML = '<p style="padding:20px; text-align:center; color:#f44;">Failed to load details.</p>';
         }
+    }
+
+    details.classList.toggle('open');
+    const arrow = header.querySelector('.arrow-icon');
+    if (arrow) {
+        arrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
     }
 }
 
