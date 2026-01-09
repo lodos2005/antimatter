@@ -729,9 +729,9 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         };
 
-        actionsDiv.appendChild(copyBtn);
-        wrapper.appendChild(messageDiv);
-        wrapper.appendChild(actionsDiv);
+        const footerDiv = document.createElement('div');
+        footerDiv.className = 'message-footer';
+        footerDiv.appendChild(actionsDiv);
 
         // Versioning initialization for user messages
         if (sender === 'user') {
@@ -759,8 +759,11 @@ document.addEventListener('DOMContentLoaded', () => {
             versionNav.querySelector('.prev-btn').onclick = () => switchVersion(wrapper, -1);
             versionNav.querySelector('.next-btn').onclick = () => switchVersion(wrapper, 1);
 
-            wrapper.appendChild(versionNav);
+            footerDiv.appendChild(versionNav);
         }
+
+        wrapper.appendChild(messageDiv);
+        wrapper.appendChild(footerDiv);
 
         chatContainer.appendChild(wrapper);
 
@@ -831,12 +834,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function startEditingMessage(wrapper) {
         const contentDiv = wrapper.querySelector('.message-content');
-        const actionsDiv = wrapper.querySelector('.message-actions');
+        const footerDiv = wrapper.querySelector('.message-footer');
         const originalText = wrapper._rawContent;
 
-        // Hide original content and actions
+        // Hide original content and footer
         contentDiv.style.display = 'none';
-        actionsDiv.style.display = 'none';
+        if (footerDiv) footerDiv.style.setProperty('display', 'none', 'important');
 
         // Create edit box
         const editBox = document.createElement('div');
@@ -855,7 +858,7 @@ document.addEventListener('DOMContentLoaded', () => {
         cancelBtn.onclick = () => {
             editBox.remove();
             contentDiv.style.display = 'block';
-            actionsDiv.style.display = 'flex';
+            if (footerDiv) footerDiv.style.removeProperty('display');
         };
 
         const saveBtn = document.createElement('button');
@@ -866,7 +869,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (newText && newText !== originalText) {
                 editBox.remove();
                 contentDiv.style.display = 'block';
-                actionsDiv.style.display = 'flex';
+                if (footerDiv) footerDiv.style.removeProperty('display');
                 sendMessageInternal(newText, wrapper);
             } else {
                 cancelBtn.onclick();
