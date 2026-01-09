@@ -619,9 +619,15 @@ function updateCurlExamples() {
     }
 }
 
-async function createKey() {
-    const name = prompt("Enter a name for this API Key (e.g. 'Laptop', 'App 1'):");
-    if (!name) return;
+// Open the Create Key Modal
+function createKey() {
+    document.getElementById('new-key-name').value = ''; // Reset input
+    document.getElementById('create-key-modal').showModal();
+}
+
+// Handle Modal Submission
+async function submitCreateKey() {
+    const name = document.getElementById('new-key-name').value || 'Unnamed Key';
 
     try {
         const res = await fetch(`${API_BASE}/api/admin/keys`, {
@@ -634,7 +640,9 @@ async function createKey() {
         });
 
         if (res.ok) {
+            document.getElementById('create-key-modal').close();
             loadKeys();
+            // Show success animation or toast if desired
         } else {
             const d = await res.json();
             alert("Error: " + (d.error || "Failed to create key"));

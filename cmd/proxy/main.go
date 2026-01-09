@@ -1260,6 +1260,9 @@ func main() {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
+				if keys == nil {
+					keys = []database.APIKey{}
+				}
 				c.JSON(http.StatusOK, gin.H{"keys": keys})
 			})
 

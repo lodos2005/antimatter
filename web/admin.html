@@ -924,112 +924,141 @@
                                 </label>
                             </div>
                         </div>
-                </div>
 
-                </form>
-            </div>
-    </div>
-    <!-- API Keys View -->
-    <div id="view-keys" class="view-section" style="display: none;">
-        <div class="dashboard-header">
-            <div>
-                <h1 style="font-size: 2em; font-weight: 700; margin-bottom: 4px;">API Keys</h1>
-                <p style="color: #666; margin: 0;">Manage access tokens for remote verification</p>
-            </div>
-            <button onclick="createKey()" class="refresh-btn" style="background: var(--admin-accent); border: none;">
-                + New Key
-            </button>
-        </div>
-
-        <div class="settings-group"
-            style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
-            <div id="keys-list">
-                <!-- Keys populated by JS -->
-                <p style="color: #888; text-align: center;">Loading keys...</p>
-            </div>
-        </div>
-
-        <div class="settings-group"
-            style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border); margin-top: 20px;">
-
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3 style="margin: 0; font-weight: 600;">API Usage Generator</h3>
-
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <select id="gen-key-select" onchange="updateCurlExamples()"
-                        style="background: rgba(0,0,0,0.3); color: #fff; border: 1px solid var(--admin-border); padding: 6px 12px; border-radius: 6px; outline: none; font-size: 0.9em;">
-                        <option value="YOUR_API_KEY">Select API Key...</option>
-                    </select>
-
-                    <select id="gen-model-select" onchange="updateCurlExamples()"
-                        style="background: rgba(0,0,0,0.3); color: #fff; border: 1px solid var(--admin-border); padding: 6px 12px; border-radius: 6px; outline: none; font-size: 0.9em;">
-                        <option value="gemini-3-flash">gemini-3-flash</option>
-                        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-                        <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
-                        <option value="gpt-4o">gpt-4o</option>
-                    </select>
+                    </form>
                 </div>
             </div>
+            <!-- API Keys View -->
+            <div id="view-keys" class="view-section" style="display: none;">
+                <div class="dashboard-header">
+                    <div>
+                        <h1 style="font-size: 2em; font-weight: 700; margin-bottom: 4px;">API Keys</h1>
+                        <p style="color: #666; margin: 0;">Manage access tokens for remote verification</p>
+                    </div>
+                    <button onclick="createKey()" class="refresh-btn"
+                        style="background: var(--admin-accent); border: none;">
+                        + New Key
+                    </button>
+                </div>
 
-            <style>
-                details.api-example {
-                    background: rgba(255, 255, 255, 0.03);
-                    border: 1px solid var(--admin-border);
-                    border-radius: 8px;
-                    margin-bottom: 10px;
-                    overflow: hidden;
-                }
+                <div class="settings-group"
+                    style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border);">
+                    <div id="keys-list">
+                        <!-- Keys populated by JS -->
+                        <p style="color: #888; text-align: center;">Loading keys...</p>
+                    </div>
+                </div>
 
-                details.api-example summary {
-                    padding: 15px;
-                    cursor: pointer;
-                    font-weight: 500;
-                    color: #ddd;
-                    list-style: none;
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                }
+                <!-- Create Key Modal -->
+                <dialog id="create-key-modal"
+                    style="background: var(--admin-bg); color: #fff; border: 1px solid var(--admin-border); border-radius: 12px; padding: 0; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
+                    <div style="padding: 24px;">
+                        <h3 style="margin: 0 0 8px 0; font-size: 1.3em;">New API Key</h3>
+                        <p style="margin: 0 0 20px 0; color: #888; font-size: 0.9em;">Create a new access token for
+                            remote connections</p>
 
-                details.api-example summary::-webkit-details-marker {
-                    display: none;
-                }
+                        <div style="margin-bottom: 24px;">
+                            <label
+                                style="display: block; margin-bottom: 6px; color: #ccc; font-weight: 500; font-size: 0.9em;">Name
+                                (Optional)</label>
+                            <input type="text" id="new-key-name" class="admin-login-input"
+                                placeholder="e.g. 'Laptop', 'App 1'"
+                                style="width: 100%; box-sizing: border-box; padding: 10px 12px; margin: 0;">
+                        </div>
 
-                details.api-example summary::after {
-                    content: '+';
-                    font-size: 1.2em;
-                    color: #888;
-                }
+                        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                            <button type="button" onclick="document.getElementById('create-key-modal').close()"
+                                style="background: transparent; border: 1px solid var(--admin-border); color: #ccc; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 500; transition: all 0.2s;">Cancel</button>
+                            <button type="button" onclick="submitCreateKey()"
+                                style="background: var(--admin-accent); border: none; color: #fff; padding: 10px 24px; border-radius: 8px; cursor: pointer; font-weight: 500; transition: all 0.2s;">Create
+                                Key</button>
+                        </div>
+                    </div>
+                </dialog>
 
-                details.api-example[open] summary::after {
-                    content: '-';
-                }
 
-                details.api-example .content {
-                    padding: 20px;
-                    border-top: 1px solid var(--admin-border);
-                    background: rgba(0, 0, 0, 0.2);
-                }
+                <div class="settings-group"
+                    style="background: var(--admin-card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--admin-border); margin-top: 20px;">
 
-                .code-block {
-                    background: #0f1115;
-                    padding: 15px;
-                    border-radius: 6px;
-                    font-family: monospace;
-                    font-size: 0.9em;
-                    color: #a5b3ce;
-                    overflow-x: auto;
-                    white-space: pre-wrap;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                }
-            </style>
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 style="margin: 0; font-weight: 600;">API Usage Generator</h3>
 
-            <details class="api-example" open>
-                <summary>Chat Completions (cURL)</summary>
-                <div class="content">
-                    <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Standard
-                        OpenAI-compatible chat completion endpoint.</p>
-                    <pre class="code-block" id="code-chat">curl http://localhost:8045/v1/chat/completions \
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <select id="gen-key-select" onchange="updateCurlExamples()"
+                                style="background: rgba(0,0,0,0.3); color: #fff; border: 1px solid var(--admin-border); padding: 6px 12px; border-radius: 6px; outline: none; font-size: 0.9em;">
+                                <option value="YOUR_API_KEY">Select API Key...</option>
+                            </select>
+
+                            <select id="gen-model-select" onchange="updateCurlExamples()"
+                                style="background: rgba(0,0,0,0.3); color: #fff; border: 1px solid var(--admin-border); padding: 6px 12px; border-radius: 6px; outline: none; font-size: 0.9em;">
+                                <option value="gemini-3-flash">gemini-3-flash</option>
+                                <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                                <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+                                <option value="gpt-4o">gpt-4o</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <style>
+                        details.api-example {
+                            background: rgba(255, 255, 255, 0.03);
+                            border: 1px solid var(--admin-border);
+                            border-radius: 8px;
+                            margin-bottom: 10px;
+                            overflow: hidden;
+                        }
+
+                        details.api-example summary {
+                            padding: 15px;
+                            cursor: pointer;
+                            font-weight: 500;
+                            color: #ddd;
+                            list-style: none;
+                            display: flex;
+                            align-items: center;
+                            justify-content: space-between;
+                        }
+
+                        details.api-example summary::-webkit-details-marker {
+                            display: none;
+                        }
+
+                        details.api-example summary::after {
+                            content: '+';
+                            font-size: 1.2em;
+                            color: #888;
+                        }
+
+                        details.api-example[open] summary::after {
+                            content: '-';
+                        }
+
+                        details.api-example .content {
+                            padding: 20px;
+                            border-top: 1px solid var(--admin-border);
+                            background: rgba(0, 0, 0, 0.2);
+                        }
+
+                        .code-block {
+                            background: #0f1115;
+                            padding: 15px;
+                            border-radius: 6px;
+                            font-family: monospace;
+                            font-size: 0.9em;
+                            color: #a5b3ce;
+                            overflow-x: auto;
+                            white-space: pre-wrap;
+                            border: 1px solid rgba(255, 255, 255, 0.1);
+                        }
+                    </style>
+
+                    <details class="api-example" open>
+                        <summary>Chat Completions (cURL)</summary>
+                        <div class="content">
+                            <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Standard
+                                OpenAI-compatible chat completion endpoint.</p>
+                            <pre class="code-block" id="code-chat">curl http://localhost:8045/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;" \
   -d '{
@@ -1039,37 +1068,37 @@
       {"role": "user", "content": "Hello!"}
     ]
   }'</pre>
-                </div>
-            </details>
+                        </div>
+                    </details>
 
-            <details class="api-example">
-                <summary>List Models (cURL)</summary>
-                <div class="content">
-                    <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Retrieve a
-                        list of available models.</p>
-                    <pre class="code-block" id="code-models">curl http://localhost:8045/v1/models \
+                    <details class="api-example">
+                        <summary>List Models (cURL)</summary>
+                        <div class="content">
+                            <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">Retrieve a
+                                list of available models.</p>
+                            <pre class="code-block" id="code-models">curl http://localhost:8045/v1/models \
   -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;"</pre>
-                </div>
-            </details>
+                        </div>
+                    </details>
 
-            <details class="api-example">
-                <summary>Admin: Create API Key (cURL)</summary>
-                <div class="content">
-                    <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
-                        Programmatically create a new API key (Requires Admin Password specifically).</p>
-                    <pre class="code-block" id="code-admin-new">curl -X POST http://localhost:8045/api/admin/keys \
+                    <details class="api-example">
+                        <summary>Admin: Create API Key (cURL)</summary>
+                        <div class="content">
+                            <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
+                                Programmatically create a new API key (Requires Admin Password specifically).</p>
+                            <pre class="code-block" id="code-admin-new">curl -X POST http://localhost:8045/api/admin/keys \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer &lt;ADMIN_PASSWORD&gt;" \
   -d '{"name": "New Key from API"}'</pre>
-                </div>
-            </details>
+                        </div>
+                    </details>
 
-            <details class="api-example">
-                <summary>Anthropic Messages (cURL)</summary>
-                <div class="content">
-                    <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
-                        Anthropic-compatible endpoint.</p>
-                    <pre class="code-block" id="code-anthropic">curl http://localhost:8045/v1/messages \
+                    <details class="api-example">
+                        <summary>Anthropic Messages (cURL)</summary>
+                        <div class="content">
+                            <p style="margin-top: 0; color: #888; font-size: 0.9em; margin-bottom: 10px;">
+                                Anthropic-compatible endpoint.</p>
+                            <pre class="code-block" id="code-anthropic">curl http://localhost:8045/v1/messages \
   -H "x-api-key: &lt;YOUR_API_KEY&gt;" \
   -H "anthropic-version: 2023-06-01" \
   -H "content-type: application/json" \
@@ -1080,11 +1109,11 @@
         {"role": "user", "content": "Hello, world"}
     ]
 }'</pre>
+                        </div>
+                    </details>
                 </div>
-            </details>
-        </div>
-    </div>
-    </main>
+            </div>
+        </main>
     </div>
 
     <script src="/static/js/admin.js"></script>
