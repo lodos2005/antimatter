@@ -1,4 +1,5 @@
 const API_BASE = window.location.origin;
+let cachedSystemPrompt = "You are a helpful assistant.";
 
 function getCookie(name) {
     const value = `; ${document.cookie}`;
@@ -36,6 +37,15 @@ async function checkAuth() {
             loadModels();
             loadRecentLogs();
             loadAccounts(); // Load accounts on initial load
+
+            // Pre-load system prompt for cURL examples
+            const configRes = await fetch(`${API_BASE}/api/admin/config`);
+            if (configRes.ok) {
+                const cfg = await configRes.json();
+                if (cfg.models && cfg.models.system_prompt) {
+                    cachedSystemPrompt = cfg.models.system_prompt;
+                }
+            }
         }
     } catch (e) {
         console.log('Not authenticated');
@@ -460,6 +470,8 @@ async function loadSettings() {
         document.getElementById('set-auth-mode').value = cfg.proxy.auth_mode;
         document.getElementById('set-fallback-model').value = cfg.models.fallback_model;
         document.getElementById('set-system-prompt').value = cfg.models.system_prompt || ''; // Load prompt
+        cachedSystemPrompt = cfg.models.system_prompt || "You are a helpful assistant.";
+        updateCurlExamples(); // Refresh examples with new prompt
 
         document.getElementById('set-strategy').value = cfg.strategy.type;
         document.getElementById('set-session-limit').value = (cfg.session && cfg.session.webui_request_limit) ? cfg.session.webui_request_limit : 0;
@@ -649,7 +661,7 @@ function updateCurlExamples() {
         const body = {
             model: model,
             messages: [
-                { role: "system", content: "You are a helpful assistant." },
+                { role: "system", content: cachedSystemPrompt },
                 { role: "user", content: "Hello!" }
             ]
         };

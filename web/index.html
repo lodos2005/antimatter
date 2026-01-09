@@ -52,31 +52,33 @@
 
     <main class="main-content">
         <header class="mobile-header">
-            <button id="menu-toggle" class="menu-toggle">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="3" y1="12" x2="21" y2="12"></line>
-                    <line x1="3" y1="6" x2="21" y2="6"></line>
-                    <line x1="3" y1="18" x2="21" y2="18"></line>
-                </svg>
-            </button>
-            <div class="mobile-title">AntiMatter</div>
-        </header>
-
-        <div class="model-selector-container" id="model-selector-container">
-            <span style="font-size: 0.8em; color: var(--text-secondary);">Model:</span>
-            <div class="custom-select-wrapper">
-                <select id="model-select" class="model-selector">
-                    <option value="" disabled selected>Login Required</option>
-                </select>
-                <div class="custom-select-icon">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            <div class="mobile-header-top">
+                <button id="menu-toggle" class="menu-toggle">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="6 9 12 15 18 9"></polyline>
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
                     </svg>
+                </button>
+                <div class="mobile-title">AntiMatter</div>
+            </div>
+
+            <div class="model-selector-container" id="model-selector-container">
+                <span style="font-size: 0.8em; color: var(--text-secondary);">Model:</span>
+                <div class="custom-select-wrapper">
+                    <select id="model-select" class="model-selector">
+                        <option value="" disabled selected>Login Required</option>
+                    </select>
+                    <div class="custom-select-icon">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </div>
                 </div>
             </div>
-        </div>
+        </header>
 
         <!-- Login View -->
         <div id="login-view" class="login-view">
