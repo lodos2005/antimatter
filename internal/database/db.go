@@ -489,3 +489,14 @@ func GetSessionRequestCount(sessionID string) (int, error) {
 	}
 	return count, nil
 }
+
+// GetSessionTokenCount returns the total number of tokens used by a specific session ID
+func GetSessionTokenCount(sessionID string) (int64, error) {
+	var total int64
+	// Use COALESCE to handle NULL summing to 0 if no rows or null values
+	err := DB.QueryRow("SELECT COALESCE(SUM(total_tokens), 0) FROM request_logs WHERE session_id = ?", sessionID).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}

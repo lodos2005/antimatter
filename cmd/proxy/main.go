@@ -363,15 +363,30 @@ func chatCompletionsHandler(tm *auth.TokenManager, up *upstream.Client, cfg *con
 		// Check if this is a WebUI session based on auth method or cookie presence
 		authMethod, _ := c.Get("auth_method")
 		// "session" is set in AuthMiddleware for cookie-based auth
-		if authMethod == "session" && cfg.Session.WebUIRequestLimit > 0 {
+		if authMethod == "session" {
 			sessionID, err := c.Cookie("antimatter_session")
 			if err == nil && sessionID != "" {
-				count, err := database.GetSessionRequestCount(sessionID)
-				if err == nil && count >= cfg.Session.WebUIRequestLimit {
-					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-						"error": fmt.Sprintf("Session request limit reached (%d/%d). Please refresh your session or contact admin.", count, cfg.Session.WebUIRequestLimit),
-					})
-					return
+				// 1. Request Usage Check
+				if cfg.Session.WebUIRequestLimit > 0 {
+					count, err := database.GetSessionRequestCount(sessionID)
+					if err == nil && count >= cfg.Session.WebUIRequestLimit {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"error": fmt.Sprintf("Session request limit reached (%d/%d). Please refresh your session or contact admin.", count, cfg.Session.WebUIRequestLimit),
+						})
+						return
+					}
+				}
+
+				// 2. Token Usage Check
+				if cfg.Session.WebUITokenLimit > 0 {
+					tokens, err := database.GetSessionTokenCount(sessionID)
+					// Verify tokens against limit
+					if err == nil && tokens >= int64(cfg.Session.WebUITokenLimit) {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"error": fmt.Sprintf("Token limiti doldu (%d/%d).", tokens, cfg.Session.WebUITokenLimit),
+						})
+						return
+					}
 				}
 			}
 		}
@@ -998,6 +1013,7 @@ func main() {
 					cfg.Server = newCfg.Server
 					cfg.Proxy = newCfg.Proxy
 					cfg.Models = newCfg.Models
+					cfg.Session = newCfg.Session // Update session settings
 					cfg.Admin.Enabled = newCfg.Admin.Enabled // Only update enabled/password
 					cfg.Admin.Password = newCfg.Admin.Password 
 					// Keep existing JWT secret if it was random in memory (or reload if it's persistent)

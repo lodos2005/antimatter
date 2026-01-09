@@ -401,6 +401,8 @@ async function loadSettings() {
         document.getElementById('set-auth-mode').value = cfg.proxy.auth_mode;
         document.getElementById('set-fallback-model').value = cfg.models.fallback_model;
         document.getElementById('set-strategy').value = cfg.strategy.type;
+        document.getElementById('set-session-limit').value = (cfg.session && cfg.session.webui_request_limit) ? cfg.session.webui_request_limit : 0;
+        document.getElementById('set-token-limit').value = (cfg.session && cfg.session.webui_token_limit) ? cfg.session.webui_token_limit : 0;
 
         document.getElementById('set-debug').checked = cfg.proxy.debug;
 
@@ -428,6 +430,10 @@ async function saveSettings() {
         },
         strategy: {
             type: document.getElementById('set-strategy').value
+        },
+        session: {
+            webui_request_limit: parseInt(document.getElementById('set-session-limit').value) || 0,
+            webui_token_limit: parseInt(document.getElementById('set-token-limit').value) || 0
         },
         admin: {
             enabled: document.getElementById('set-admin-enabled').checked,

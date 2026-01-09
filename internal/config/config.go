@@ -55,6 +55,7 @@ type StrategyConfig struct {
 
 type SessionConfig struct {
 	WebUIRequestLimit int `yaml:"webui_request_limit" json:"webui_request_limit"`
+	WebUITokenLimit   int `yaml:"webui_token_limit" json:"webui_token_limit"`
 }
 
 // LoadConfig loads the configuration from a YAML file
@@ -82,6 +83,9 @@ func LoadConfig(path string) (*Config, error) {
 	// Ensure positive limit if negative
 	if cfg.Session.WebUIRequestLimit < 0 {
 		cfg.Session.WebUIRequestLimit = -cfg.Session.WebUIRequestLimit
+	}
+	if cfg.Session.WebUITokenLimit < 0 {
+		cfg.Session.WebUITokenLimit = -cfg.Session.WebUITokenLimit
 	}
 
 	return &cfg, nil
@@ -132,6 +136,9 @@ session:
   # Limit number of chat requests per specific WebUI session.
   # 0 = Unlimited. > 0 = Limit.
   webui_request_limit: 50
+  # Limit total tokens usage per specific WebUI session.
+  # 0 = Unlimited. > 0 = Limit.
+  webui_token_limit: 50000
 
 accounts:
   # - email: "example@gmail.com"
