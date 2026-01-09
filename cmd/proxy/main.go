@@ -677,6 +677,9 @@ func main() {
 			if _, err := auth.Login(); err != nil {
 				log.Fatalf("Login failed: %v", err)
 			}
+			// Wait a bit to ensure the "Login Successful" HTML page is flushed to the browser
+			// before the process exits and kills the local server.
+			time.Sleep(3 * time.Second)
 			return
 		}
 		if os.Args[1] == "status" {
